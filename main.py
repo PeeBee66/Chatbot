@@ -1,109 +1,114 @@
 import sys
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QPushButton, QTextEdit, QLineEdit, QLabel, QSplitter)
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, QTextEdit, QHBoxLayout,
+                             QDialog, QLineEdit, QCheckBox, QPlainTextEdit, QLabel, QGroupBox, QFormLayout)
+from PyQt5.QtCore import Qt, QTimer
+from analyzer import TransparentWindow
 
-class TransparentTextEdit(QTextEdit):
+class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setStyleSheet("background-color: rgba(255, 255, 255, 128);")
+        self.setWindowTitle("Settings")
+        self.setGeometry(200, 200, 400, 300)
+        self.initUI()
 
-class ChatBotInterface(QMainWindow):
+    def initUI(self):
+        layout = QVBoxLayout()
+
+        # Ollama API String section
+        api_group = QGroupBox("Ollama API Settings")
+        api_layout = QFormLayout()
+        self.api_input = QLineEdit()
+        api_layout.addRow("API String:", self.api_input)
+        api_group.setLayout(api_layout)
+        layout.addWidget(api_group)
+
+        # Discord chat section
+        discord_group = QGroupBox("Discord Chat")
+        discord_layout = QVBoxLayout()
+        self.discord_enable = QCheckBox("Enable")
+        discord_layout.addWidget(self.discord_enable)
+        
+        ignore_label = QLabel("Ignore users:")
+        discord_layout.addWidget(ignore_label)
+        self.ignore_users = QPlainTextEdit()
+        discord_layout.addWidget(self.ignore_users)
+        
+        discord_group.setLayout(discord_layout)
+        layout.addWidget(discord_group)
+
+        self.setLayout(layout)
+
+class PipsChatAnalyser(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Chat Bot Interface POC")
-        self.setGeometry(100, 100, 800, 600)
+        self.initUI()
+        self.is_analyzing = False
+        self.init_analyzer()
+        self.settings_dialog = None
+
+    def initUI(self):
+        self.setWindowTitle("PIPS CHAT ANALYSER")
+        self.setGeometry(100, 100, 600, 400)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
+        layout = QVBoxLayout(central_widget)
 
-        # Top buttons
-        top_layout = QHBoxLayout()
-        self.start_button = QPushButton("Start")
-        self.stop_button = QPushButton("Stop")
-        self.prompt_input = QLineEdit()
-        self.prompt_input.setPlaceholderText("Prompt")
-        self.setting_button = QPushButton("Setting")
+        # Settings button
+        self.settings_button = QPushButton("Settings", self)
+        self.settings_button.clicked.connect(self.open_settings)
+        layout.addWidget(self.settings_button)
 
-        top_layout.addWidget(self.start_button)
-        top_layout.addWidget(self.stop_button)
-        top_layout.addWidget(self.prompt_input)
-        top_layout.addWidget(self.setting_button)
+        # Chat log
+        self.chat_log = QTextEdit(self)
+        self.chat_log.setReadOnly(True)
+        layout.addWidget(self.chat_log)
 
-        main_layout.addLayout(top_layout)
+        # Start and Stop buttons
+        button_layout = QHBoxLayout()
+        self.start_button = QPushButton("Start", self)
+        self.start_button.clicked.connect(self.start_analysis)
+        button_layout.addWidget(self.start_button)
 
-        # Main content area with splitters
-        main_splitter = QSplitter(Qt.Orientation.Vertical)
-        
-        # Top row splitter
-        top_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.chat_history = TransparentTextEdit()
-        self.chat_history.setPlaceholderText("TRANSPARENT FOR READING THE HISTORY OF THE CHAT")
-        self.rewritten_history = QTextEdit()
-        self.rewritten_history.setPlaceholderText("REWRITING THE HOSTPORY OF THE CHAT")
-        top_splitter.addWidget(self.chat_history)
-        top_splitter.addWidget(self.rewritten_history)
+        self.stop_button = QPushButton("Stop", self)
+        self.stop_button.clicked.connect(self.stop_analysis)
+        self.stop_button.setEnabled(False)
+        button_layout.addWidget(self.stop_button)
 
-        # Bottom row splitter
-        bottom_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self.transparent_area = TransparentTextEdit()
-        self.transparent_area.setPlaceholderText("TRASPERENT")
-        self.proposed_reply = QTextEdit()
-        self.proposed_reply.setPlaceholderText("PROPOSED REPLY TEXT")
-        bottom_splitter.addWidget(self.transparent_area)
-        bottom_splitter.addWidget(self.proposed_reply)
+        layout.addLayout(button_layout)
 
-        main_splitter.addWidget(top_splitter)
-        main_splitter.addWidget(bottom_splitter)
-
-        main_layout.addWidget(main_splitter)
-
-        # Bottom buttons
-        bottom_layout = QHBoxLayout()
-        self.rewrite_button = QPushButton("RE WRITE")
-        self.copy_button = QPushButton("COPY")
-        bottom_layout.addStretch()
-        bottom_layout.addWidget(self.rewrite_button)
-        bottom_layout.addWidget(self.copy_button)
-
-        main_layout.addLayout(bottom_layout)
-
-        # Connect buttons to functions
-        self.start_button.clicked.connect(self.start_process)
-        self.stop_button.clicked.connect(self.stop_process)
-        self.setting_button.clicked.connect(self.open_settings)
-        self.rewrite_button.clicked.connect(self.rewrite_text)
-        self.copy_button.clicked.connect(self.copy_text)
-
-        # Timer for simulating real-time updates
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_rewritten_history)
-
-    def start_process(self):
-        print("Start button clicked")
-        self.timer.start(1000)  # Update every second
-
-    def stop_process(self):
-        print("Stop button clicked")
-        self.timer.stop()
+    def init_analyzer(self):
+        self.analyzer_window = TransparentWindow()
+        self.analyzer_window.text_captured.connect(self.update_log)
+        self.analyzer_window.show()
 
     def open_settings(self):
-        print("Settings button clicked")
+        if not self.settings_dialog:
+            self.settings_dialog = SettingsDialog(self)
+        self.settings_dialog.show()
 
-    def rewrite_text(self):
-        print("Rewrite button clicked")
+    def start_analysis(self):
+        self.is_analyzing = True
+        self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
+        self.log_message("System: Analysis started")
+        self.analyzer_window.start_capture()
 
-    def copy_text(self):
-        print("Copy button clicked")
+    def stop_analysis(self):
+        self.is_analyzing = False
+        self.start_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+        self.log_message("System: Analysis stopped")
+        self.analyzer_window.stop_capture()
 
-    def update_rewritten_history(self):
-        current_text = self.chat_history.toPlainText()
-        self.rewritten_history.setPlainText(current_text.upper())
+    def log_message(self, message):
+        self.chat_log.append(message)
 
-if __name__ == '__main__':
+    def update_log(self, text):
+        self.log_message(f"Captured: {text}")
+
+if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = ChatBotInterface()
-    window.show()
-    sys.exit(app.exec())
+    main_window = PipsChatAnalyser()
+    main_window.show()
+    sys.exit(app.exec_())

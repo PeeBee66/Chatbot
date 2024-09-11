@@ -1,0 +1,33 @@
+services:
+  # ollama and API
+  ollama:
+    image: ollama/ollama:latest
+    privileged: true
+    container_name: ollama
+    restart: unless-stopped
+    # Expose Ollama API outside the container stack
+    ports:
+      - 11434:11434
+    volumes:
+      - ollama:/root/.ollama
+
+  # webui, nagivate to http://localhost:3000/ to use
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    privileged: true
+    volumes:
+      - open-webui:/app/backend/data
+    depends_on:
+      - ollama
+    ports:
+      - 3000:8080
+    environment:
+      - "OLLAMA_API_BASE_URL=http://ollama:11434/api"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    restart: unless-stopped
+
+volumes:
+  ollama:
+  open-webui:

@@ -20,11 +20,4 @@ This project is an automatic chat reader designed to process text from chats and
 ## To-Do
 - [ ] fix issue where chat does recognise change 
 
-## Text Size Examples
 
-### Header (Markdown)  
-This is a normal header using `###`.
-
-<p><span style="font-size:18px">This text is 18px using HTML inline styling.</span></p>
-
-<p><span style="font-size:24px">This text is 24px using HTML inline styling.</span></p>

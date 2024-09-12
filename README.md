@@ -18,9 +18,7 @@ This project is an automatic chat reader designed to process text from chats and
    [Ollama Docker GitHub](https://github.com/valiantlynx/ollama-docker)
 
 ## To-Do
-- [ ] **Integrate Ollama API** to reply to messages while ignoring already replied ones.
-- [ ] Add settings to ignore specific chats.
-- [ ] Add settings to ignore specific users.
+- [ ] fix issue where chat does recognise change 
 
 ## Text Size Examples
 

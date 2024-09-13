@@ -1,0 +1,15 @@
+ID,Conversation,Message
+0001,first_conversation,Pee bee 4:14 PM
+0002,first_conversation,What did you get for Sam for his birthday?
+0003,first_conversation,What can | help you with?
+0004,first_conversation,| got him a new book on space exploration that he's been wanting.
+0005,first_conversation,"Beep beep, I'm here at 4:14 PM! How can | assist you?"
+0006,first_conversation,"I'm just browsing through your knowledge base and looking for answers on topics like history, science, or technology. Anything specific | should know?"
+0007,ollama_response,
+0008,user_message,Pee bee 4:27 Pm
+0009,ollama_response,"I think you meant ""Pete Bee"" or perhaps something else entirely. Can I help clarify what you're trying to say?"
+0010,user_message,hello Im ready
+0011,ollama_response,I'm here to help! What's on your mind?
+0012,user_message,"| think you meant ""Pete Bee"" or perhaps something else entirely. Can | help clarify what you're trying to say?"
+0013,ollama_response,"I meant to type ""Peter Pan"". Can I explain further?"
+0014,user_message,"I'm just browsing through your knowledge base and looking for answers on topics like history, science, or technology. Anything specific | should kn"

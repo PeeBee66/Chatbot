@@ -1,11 +1,11 @@
-import sys
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QSizeGrip
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+import logging
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QSizeGrip
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QPainter, QColor, QPen
 import pytesseract
 from PIL import ImageGrab, Image
 
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+logging.basicConfig(filename='chat_analyzer_log.txt', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class TransparentWindow(QWidget):
     text_captured = pyqtSignal(str)
@@ -13,10 +13,9 @@ class TransparentWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.initUI()
-        self.is_capturing = False
-        self.capture_timer = QTimer(self)
-        self.capture_timer.timeout.connect(self.capture_text)
-        self.previous_lines = set()
+        self.oldPos = None
+        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+        logging.info(f"Tesseract path set to: {pytesseract.pytesseract.tesseract_cmd}")
 
     def initUI(self):
         self.setWindowTitle('Chat Analyzer')
@@ -51,28 +50,19 @@ class TransparentWindow(QWidget):
     def mouseReleaseEvent(self, event):
         self.oldPos = None
 
-    def start_capture(self):
-        self.is_capturing = True
-        self.capture_timer.start(5000)  # Capture every 5 seconds
+    def capture_screen(self):
+        try:
+            logging.debug("Attempting to capture screen")
+            x, y, w, h = self.geometry().getRect()
+            screenshot = ImageGrab.grab(bbox=(x, y, x + w, y + h))
+            screenshot = screenshot.resize((w * 2, h * 2), Image.LANCZOS)
+            
+            screenshot.save("debug_screenshot.png")
+            logging.debug(f"Screenshot saved: debug_screenshot.png")
 
-    def stop_capture(self):
-        self.is_capturing = False
-        self.capture_timer.stop()
-
-    def capture_text(self):
-        if self.is_capturing:
-            try:
-                x, y, w, h = self.geometry().getRect()
-                screenshot = ImageGrab.grab(bbox=(x, y, x+w, y+h))
-                screenshot = screenshot.resize((w*2, h*2), Image.LANCZOS)
-                text = pytesseract.image_to_string(screenshot)
-                
-                lines = text.split('\n')
-                for line in lines:
-                    line = line.strip()
-                    if line and line not in self.previous_lines:
-                        self.previous_lines.add(line)
-                        self.text_captured.emit(line)
-                
-            except Exception as e:
-                print(f"Error capturing text: {str(e)}")
+            text = pytesseract.image_to_string(screenshot)
+            logging.debug(f"Captured text: {text}")
+            return text
+        except Exception as e:
+            logging.error(f"Error capturing screen: {str(e)}")
+            return ""

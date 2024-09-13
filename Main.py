@@ -1,13 +1,70 @@
 import sys
+import os
+import csv
+import logging
 import time
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, QTextEdit, QHBoxLayout,
-                             QGridLayout, QMessageBox)
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QIcon
-from analyzer import TransparentWindow
-from settings import SettingsDialog
-from ollama import OllamaAPI
+import re
+from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QTextEdit, QVBoxLayout, QPushButton, QWidget
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 import pyautogui
+from ollama import OllamaAPI
+from analyzer import TransparentWindow
+from settings import SettingsDialog, load_settings
+
+# Configure logging
+logging.basicConfig(filename='application_log.txt', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+
+class QTextEditLogger(logging.Handler):
+    def __init__(self, parent):
+        super().__init__()
+        self.widget = parent
+        self.widget.setReadOnly(True)
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.widget.append(msg)
+
+class CaptureThread(QThread):
+    capture_complete = pyqtSignal(str)
+
+    def __init__(self, analyzer_window):
+        super().__init__()
+        self.analyzer_window = analyzer_window
+
+    def run(self):
+        text = self.analyzer_window.capture_screen()
+        self.capture_complete.emit(text)
+
+class AnalysisThread(QThread):
+    analysis_complete = pyqtSignal(str)
+
+    def __init__(self, log_file, background_prompt, ollama_api):
+        super().__init__()
+        self.log_file = log_file
+        self.background_prompt = background_prompt
+        self.ollama_api = ollama_api
+
+    def run(self):
+        response = self.start_conversation()
+        self.analysis_complete.emit(response)
+
+    def start_conversation(self):
+        try:
+            with open(self.log_file, mode='r', newline='', encoding='utf-8') as file:
+                reader = csv.reader(file)
+                next(reader)  # Skip header
+                chat_history = [f"{row[1]}: {row[2]}" for row in reader]
+            
+            chat_history_text = "\n".join(chat_history)
+            prompt = f"{self.background_prompt}\n\n{chat_history_text}"
+            logging.info("Contacting Ollama server: Please wait for response (this may take a bit depending on AI assistant speeds)")
+            response = self.ollama_api.send_request(self.background_prompt, "Please respond to the following conversation.", chat_history_text)
+            logging.info("Received response from Ollama server")
+            
+            return response
+        except Exception as e:
+            logging.error(f"Error starting conversation: {str(e)}")
+            return ""
 
 class PipsChatAnalyser(QMainWindow):
     def __init__(self):
@@ -15,204 +72,228 @@ class PipsChatAnalyser(QMainWindow):
         self.initUI()
         self.is_analyzing = False
         self.init_analyzer()
-        self.settings_dialog = SettingsDialog(self)
-        self.load_settings()
         self.captured_text = ""
-        self.last_ai_message = ""
-        self.last_scanned_text = ""
-        self.scan_timer = QTimer(self)
-        self.scan_timer.timeout.connect(self.scan_for_changes)
-        self.last_processed_messages = []
-
+        self.log_file = None
+        self.response = None
+        self.ollama_api = None
+        self.load_settings()
+        self.capture_interval = 30  # seconds
+    
     def initUI(self):
         self.setWindowTitle("PIPS CHAT ANALYSER")
         self.setGeometry(100, 100, 800, 600)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QGridLayout(central_widget)
-
-        # Settings button (top-right corner)
-        self.settings_button = QPushButton(self)
-        self.settings_button.setIcon(QIcon('cog.png'))
-        self.settings_button.setFixedSize(40, 40)
-        self.settings_button.clicked.connect(self.open_settings)
-        main_layout.addWidget(self.settings_button, 0, 1, 1, 1, Qt.AlignRight | Qt.AlignTop)
-
-        # Background prompt text box with default prompt
+        layout = QVBoxLayout(central_widget)
+        
         self.background_prompt = QTextEdit(self)
-        default_prompt = "You are a helpful assistant. Keep your responses concise, using no more than 2 sentences."
-        self.background_prompt.setPlainText(default_prompt)
-        main_layout.addWidget(self.background_prompt, 1, 0, 1, 2)
-
-        # Chat log
+        self.background_prompt.setPlainText("You are a helpful assistant. Please keep responses concise.")
+        layout.addWidget(self.background_prompt)
+        
         self.chat_log = QTextEdit(self)
         self.chat_log.setReadOnly(True)
-        main_layout.addWidget(self.chat_log, 2, 0, 1, 2)
+        layout.addWidget(self.chat_log)
 
-        # Buttons
-        button_layout = QHBoxLayout()
-        
+        # Set up logging to the QTextEdit
+        logTextBox = QTextEditLogger(self.chat_log)
+        logTextBox.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        logging.getLogger().addHandler(logTextBox)
+        logging.getLogger().setLevel(logging.INFO)
+
         self.capture_button = QPushButton("Capture", self)
         self.capture_button.clicked.connect(self.capture_analysis)
-        button_layout.addWidget(self.capture_button)
-
+        layout.addWidget(self.capture_button)
+        
         self.start_button = QPushButton("Start", self)
         self.start_button.clicked.connect(self.start_analysis)
-        self.start_button.setEnabled(False)
-        button_layout.addWidget(self.start_button)
-
-        self.pause_button = QPushButton("Pause", self)
-        self.pause_button.clicked.connect(self.pause_analysis)
-        self.pause_button.setEnabled(False)
-        button_layout.addWidget(self.pause_button)
+        layout.addWidget(self.start_button)
 
         self.stop_button = QPushButton("Stop", self)
         self.stop_button.clicked.connect(self.stop_analysis)
-        self.stop_button.setEnabled(False)
-        button_layout.addWidget(self.stop_button)
+        layout.addWidget(self.stop_button)
 
-        button_widget = QWidget()
-        button_widget.setLayout(button_layout)
-        main_layout.addWidget(button_widget, 3, 0, 1, 2)
+        self.settings_button = QPushButton("Settings", self)
+        self.settings_button.clicked.connect(self.open_settings)
+        layout.addWidget(self.settings_button)
 
     def init_analyzer(self):
         self.analyzer_window = TransparentWindow()
-        self.analyzer_window.text_captured.connect(self.update_captured_text)
         self.analyzer_window.show()
 
+    def load_settings(self):
+        settings = load_settings()
+        self.ollama_api = OllamaAPI(settings['ollama_url'], settings['model'])
+        self.capture_interval = settings['capture_interval']
+
     def open_settings(self):
-        if self.settings_dialog.exec_():
+        settings_dialog = SettingsDialog(self)
+        if settings_dialog.exec_():
             self.load_settings()
 
-    def load_settings(self):
-        settings = self.settings_dialog.get_settings()
-        self.ollama_api = OllamaAPI(
-            settings.get('ollama_url', "http://ollama:11434"),
-            settings.get('model', "llama3.1:latest")
-        )
-        self.log_message(f"Settings loaded: Ollama URL: {settings.get('ollama_url')}, Model: {settings.get('model')}")
-
-    def log_message(self, message):
-        self.chat_log.append(message)
-        print(message)  # Also print to console for debugging
-
     def capture_analysis(self):
-        self.log_message("System: Capture initiated")
-        self.analyzer_window.start_capture()
+        logging.info("System: Capture initiated")
         self.capture_button.setEnabled(False)
-        self.start_button.setEnabled(True)
 
-    def update_captured_text(self, text):
-        self.captured_text = text
-        self.log_message(f"Captured text:\n{text}")
-        self.analyzer_window.stop_capture()
+        self.log_file = create_new_log_file()
+        logging.info(f"Screen capture output saved in: {self.log_file}")
+
+        self.capture_thread = CaptureThread(self.analyzer_window)
+        self.capture_thread.capture_complete.connect(self.on_capture_complete)
+        self.capture_thread.start()
+
+    def on_capture_complete(self, text):
+        if text:
+            lines = self.process_captured_text(text)
+            for line in lines:
+                append_to_csv(self.log_file, "first_conversation", line)
+            logging.info("Text added to chat log.")
+        else:
+            logging.info("No text captured.")
+        self.capture_button.setEnabled(True)
+
+    def process_captured_text(self, text):
+        lines = text.split('\n')
+        processed_lines = []
+        for line in lines:
+            line = line.strip()
+            if line and not self.is_time_stamp(line):
+                # Replace '|' with 'I' at the beginning of the line
+                line = re.sub(r'^[|]', 'I', line)
+                # Replace isolated '|' with 'I'
+                line = re.sub(r'\s[|]\s', ' I ', line)
+                processed_lines.append(line)
+        return processed_lines
+
+    def is_time_stamp(self, line):
+        # Check if the line starts or ends with a time stamp (e.g., "3:45 PM" or "10:30 AM")
+        time_pattern = r'^\d{1,2}:\d{2}\s?(?:AM|PM)|(?:AM|PM)\s?\d{1,2}:\d{2}$'
+        return re.match(time_pattern, line.strip())
 
     def start_analysis(self):
-        if not self.captured_text:
-            self.log_message("Error: No text captured. Please capture text first.")
+        if not self.log_file:
+            logging.error("Error: No capture performed. Please capture first.")
             return
         
-        msg_box = QMessageBox()
-        msg_box.setText("Click OK and move your cursor to the messaging prompt. The analysis will start in 3 seconds.")
-        msg_box.exec_()
-
-        QTimer.singleShot(3000, self.initiate_conversation)
-
-    def initiate_conversation(self):
         self.is_analyzing = True
         self.start_button.setEnabled(False)
-        self.pause_button.setEnabled(True)
-        self.stop_button.setEnabled(True)
-        self.log_message("System: Analysis started")
+        logging.info("System: Analysis started")
+
+        QMessageBox.information(self, "Chat Input Position", "Please move your cursor to the chat input field and press OK.")
+        self.chat_input_position = pyautogui.position()
+        logging.info(f"Chat input position set to: {self.chat_input_position}")
         
-        if self.ollama_api is None:
-            self.log_message("Error: Ollama API not initialized. Please check settings.")
-            return
+        self.analysis_thread = AnalysisThread(self.log_file, self.background_prompt.toPlainText(), self.ollama_api)
+        self.analysis_thread.analysis_complete.connect(self.on_analysis_complete)
+        self.analysis_thread.start()
+
+    def on_analysis_complete(self, response):
+        logging.info(f"Ollama's response: {response}")
+        logging.info("Ollama chat added to chat log.")
+        self.response = response
         
-        system_prompt = self.background_prompt.toPlainText()
-        response = self.ollama_api.send_request(
-            system_prompt,
-            "This is the chat history from a conversation. Please analyze it and start a conversation based on it.",
-            self.captured_text
-        )
-        self.log_message(f"Ollama: {response}")
-        self.type_and_send_message(response)
-        self.last_ai_message = response
-        self.last_scanned_text = self.captured_text + "\n" + response
-        self.scan_timer.start(15000)  # Start scanning every 15 seconds
-
-    def scan_for_changes(self):
-        self.analyzer_window.start_capture()
-        QTimer.singleShot(1000, self.process_scanned_text)  # Give it 1 second to capture
-  
-    def process_scanned_text(self):
-        self.analyzer_window.stop_capture()
-        new_text = self.captured_text
-
-        # Split the text into individual messages
-        messages = [msg.strip() for msg in new_text.split('\n') if msg.strip()]
-
-        # Find new messages
-        new_messages = [msg for msg in messages if msg not in self.last_processed_messages]
-
-        if not new_messages:
-            self.log_message("No change detected in chat.")
-            return
-
-        # Process each new message
-        for message in new_messages:
-            if message != self.last_ai_message:
-                self.log_message(f"New content detected: {message}")
-                self.continue_conversation(message)
-
-        # Update the last processed messages
-        self.last_processed_messages = messages
-
-    def continue_conversation(self, new_content):
-        if self.ollama_api is None:
-            self.log_message("Error: Ollama API not initialized. Please check settings.")
-            return
+        self.write_response_to_chat(response)
         
-        system_prompt = self.background_prompt.toPlainText()
-        response = self.ollama_api.send_request(
-            system_prompt,
-            "Continue the conversation based on the new message.",
-            new_content
-        )
-        self.log_message(f"Ollama: {response}")
-        self.type_and_send_message(response)
-        self.last_ai_message = response
-        self.last_processed_messages.append(response)
+        append_to_csv(self.log_file, "ollama_response", response)
+        self.continuous_analysis()
 
-    def type_and_send_message(self, message):
-        pyautogui.typewrite(message)
-        pyautogui.press('enter')
-
-    def pause_analysis(self):
+    def continuous_analysis(self):
         if self.is_analyzing:
-            self.is_analyzing = False
-            self.pause_button.setText("Resume")
-            self.log_message("System: Analysis paused")
-            self.scan_timer.stop()
+            logging.info(f"{self.capture_interval} sec before next screen refresh")
+            QTimer.singleShot(self.capture_interval * 1000, self.check_for_new_messages)
+
+    def check_for_new_messages(self):
+        logging.info("Capturing screen for updated text")
+        self.capture_thread = CaptureThread(self.analyzer_window)
+        self.capture_thread.capture_complete.connect(self.on_new_capture_complete)
+        self.capture_thread.start()
+
+    def on_new_capture_complete(self, text):
+        if text:
+            new_messages = self.get_new_messages(text)
+            if new_messages:
+                for message in new_messages:
+                    logging.info(f"New user message detected: {message}")
+                    append_to_csv(self.log_file, "user_message", message)
+                    self.process_new_message(message)
+            else:
+                logging.info("No new user messages detected.")
         else:
-            self.is_analyzing = True
-            self.pause_button.setText("Pause")
-            self.log_message("System: Analysis resumed")
-            self.scan_timer.start(15000)
+            logging.info("No new text captured.")
+        
+        if self.is_analyzing:
+            self.continuous_analysis()
+
+    def get_new_messages(self, captured_text):
+        existing_messages = set()
+        with open(self.log_file, mode='r', newline='', encoding='utf-8') as file:
+            reader = csv.reader(file)
+            next(reader)  # Skip header
+            for row in reader:
+                existing_messages.add(row[2].strip())
+
+        new_messages = []
+        for line in self.process_captured_text(captured_text):
+            if line not in existing_messages:
+                new_messages.append(line)
+                existing_messages.add(line)
+
+        return new_messages
+
+    def process_new_message(self, message):
+        logging.info("Contacting Ollama server: Please wait for response (this may take a bit depending on AI assistant speeds)")
+        response = self.ollama_api.send_request(self.background_prompt.toPlainText(), 
+                                                "Please respond to the following message:", 
+                                                message)
+        logging.info("Received response from Ollama server")
+        logging.info(f"Ollama's response: {response}")
+        append_to_csv(self.log_file, "ollama_response", response)
+        
+        self.write_response_to_chat(response)
+
+    def write_response_to_chat(self, response):
+        if self.chat_input_position:
+            original_position = pyautogui.position()
+            pyautogui.click(self.chat_input_position)
+            time.sleep(0.5)  # Wait for the click to register
+            pyautogui.typewrite(response)
+            time.sleep(0.5)  # Wait for typing to complete
+            pyautogui.press('enter')
+            time.sleep(0.5)  # Wait for enter to register
+            pyautogui.moveTo(original_position)  # Move cursor back to original position
 
     def stop_analysis(self):
         self.is_analyzing = False
         self.start_button.setEnabled(True)
-        self.pause_button.setEnabled(False)
-        self.stop_button.setEnabled(False)
-        self.capture_button.setEnabled(True)
-        self.pause_button.setText("Pause")
-        self.log_message("System: Analysis stopped")
-        self.captured_text = ""
-        self.last_ai_message = ""
-        self.last_scanned_text = ""
-        self.scan_timer.stop()
+        logging.info("System: Analysis stopped")
+
+def create_new_log_file():
+    log_folder = './logs'
+    if not os.path.exists(log_folder):
+        os.makedirs(log_folder)
+
+    i = 1
+    while os.path.exists(f"{log_folder}/chatlog{i:04d}.csv"):
+        i += 1
+    
+    log_file = f"{log_folder}/chatlog{i:04d}.csv"
+    
+    with open(log_file, mode='w', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        writer.writerow(["ID", "Conversation", "Message"])
+    
+    return log_file
+
+def append_to_csv(log_file, conversation_type, message):
+    with open(log_file, mode='a', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        
+        with open(log_file, mode='r', newline='', encoding='utf-8') as readfile:
+            lines = list(csv.reader(readfile))
+            last_id = int(lines[-1][0]) if len(lines) > 1 else 0
+        
+        writer.writerow([f"{last_id + 1:04d}", conversation_type, message])
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

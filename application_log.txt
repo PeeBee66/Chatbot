@@ -1,0 +1,42 @@
+2024-09-16 16:17:12,874 - INFO - Tesseract path set to: C:\Program Files\Tesseract-OCR\tesseract.exe
+2024-09-16 16:17:30,843 - INFO - System: Capture initiated
+2024-09-16 16:17:30,859 - INFO - Screen capture output saved in: ./logs/chatlog0025.csv
+2024-09-16 16:17:31,641 - WARNING - No text captured by Tesseract
+2024-09-16 16:17:31,677 - WARNING - No processed lines received
+2024-09-16 16:30:11,734 - INFO - Tesseract path set to: C:\Program Files\Tesseract-OCR\tesseract.exe
+2024-09-16 16:30:21,640 - INFO - System: Capture initiated
+2024-09-16 16:30:21,640 - INFO - Screen capture output saved in: ./logs/chatlog0026.csv
+2024-09-16 16:30:22,440 - WARNING - No text captured by Tesseract
+2024-09-16 16:30:22,485 - WARNING - No processed lines received
+2024-09-16 16:30:28,874 - INFO - System: Capture initiated
+2024-09-16 16:30:28,874 - INFO - Screen capture output saved in: ./logs/chatlog0027.csv
+2024-09-16 16:30:29,614 - WARNING - No text captured by Tesseract
+2024-09-16 16:30:29,639 - WARNING - No processed lines received
+2024-09-16 16:35:10,249 - INFO - Tesseract path set to: C:\Program Files\Tesseract-OCR\tesseract.exe
+2024-09-16 16:35:16,105 - INFO - System: Capture initiated
+2024-09-16 16:35:16,111 - INFO - Screen capture output saved in: ./logs/chatlog0028.csv
+2024-09-16 16:35:17,480 - INFO - Text added to chat log. Last line: knock kncowhos there
+2024-09-16 16:35:38,822 - INFO - Tesseract path set to: C:\Program Files\Tesseract-OCR\tesseract.exe
+2024-09-16 16:35:48,026 - INFO - System: Capture initiated
+2024-09-16 16:35:48,031 - INFO - Screen capture output saved in: ./logs/chatlog0029.csv
+2024-09-16 16:35:48,699 - WARNING - No text captured by Tesseract
+2024-09-16 16:35:48,774 - WARNING - No processed lines received
+2024-09-16 16:35:56,037 - INFO - System: Capture initiated
+2024-09-16 16:35:56,037 - INFO - Screen capture output saved in: ./logs/chatlog0030.csv
+2024-09-16 16:35:57,007 - INFO - Text added to chat log. Last line: knock kncowhos there
+2024-09-16 16:36:10,803 - INFO - System: Capture initiated
+2024-09-16 16:36:10,808 - INFO - Screen capture output saved in: ./logs/chatlog0031.csv
+2024-09-16 16:36:11,296 - WARNING - No text captured by Tesseract
+2024-09-16 16:36:11,341 - WARNING - No processed lines received
+2024-09-16 16:36:25,971 - INFO - System: Capture initiated
+2024-09-16 16:36:25,976 - INFO - Screen capture output saved in: ./logs/chatlog0032.csv
+2024-09-16 16:36:26,988 - INFO - Text added to chat log. Last line: knock kncowhos there
+2024-09-16 16:36:32,010 - INFO - System: Analysis started
+2024-09-16 16:36:38,859 - INFO - Chat input position set to: Point(x=563, y=1065)
+2024-09-16 16:36:38,859 - INFO - 30 sec before next screen refresh
+2024-09-16 16:37:08,857 - INFO - Capturing screen for updated text
+2024-09-16 16:47:38,715 - INFO - Tesseract path set to: C:\Program Files\Tesseract-OCR\tesseract.exe
+2024-09-16 16:47:46,416 - INFO - System: Capture initiated
+2024-09-16 16:47:46,418 - INFO - Screen capture output saved in: ./logs/chatlog0001.csv
+2024-09-16 16:47:47,173 - WARNING - No text captured by Tesseract
+2024-09-16 16:47:47,215 - WARNING - No processed lines received

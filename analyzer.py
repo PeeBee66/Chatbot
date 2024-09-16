@@ -1,6 +1,6 @@
 import logging
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QSizeGrip
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QSize
 from PyQt5.QtGui import QPainter, QColor, QPen
 import pytesseract
 from PIL import ImageGrab, Image
@@ -12,6 +12,7 @@ class TransparentWindow(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.min_size = QSize(200, 100)  # Initialize min_size here
         self.initUI()
         self.oldPos = None
         pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -22,6 +23,7 @@ class TransparentWindow(QWidget):
         self.setGeometry(100, 100, 400, 300)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setMinimumSize(self.min_size)
 
         layout = QVBoxLayout()
         self.setLayout(layout)
@@ -44,16 +46,27 @@ class TransparentWindow(QWidget):
     def mouseMoveEvent(self, event):
         if self.oldPos:
             delta = event.globalPos() - self.oldPos
-            self.move(self.x() + delta.x(), self.y() + delta.y())
+            new_pos = self.pos() + delta
+            self.move(new_pos)
             self.oldPos = event.globalPos()
 
     def mouseReleaseEvent(self, event):
         self.oldPos = None
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.width() < self.min_size.width() or self.height() < self.min_size.height():
+            self.setGeometry(self.x(), self.y(), max(self.width(), self.min_size.width()), max(self.height(), self.min_size.height()))
+            logging.warning(f"Window resized to minimum size: {self.size()}")
+
     def capture_screen(self):
         try:
             logging.debug("Attempting to capture screen")
             x, y, w, h = self.geometry().getRect()
+            logging.debug(f"Capture area: x={x}, y={y}, w={w}, h={h}")
+            if w < self.min_size.width() or h < self.min_size.height():
+                logging.warning(f"Capture area too small. Minimum size: {self.min_size.width()}x{self.min_size.height()}")
+                return ""
             screenshot = ImageGrab.grab(bbox=(x, y, x + w, y + h))
             screenshot = screenshot.resize((w * 2, h * 2), Image.LANCZOS)
             
@@ -61,7 +74,9 @@ class TransparentWindow(QWidget):
             logging.debug(f"Screenshot saved: debug_screenshot.png")
 
             text = pytesseract.image_to_string(screenshot)
-            logging.debug(f"Captured text: {text}")
+            logging.debug(f"Captured text length: {len(text)}")
+            if not text:
+                logging.warning("No text captured by Tesseract")
             return text
         except Exception as e:
             logging.error(f"Error capturing screen: {str(e)}")

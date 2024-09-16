@@ -1,1 +1,15 @@
-{"ollama_url": "http://ollama:11434/", "model": "llama3.1:latest", "discord_enable": false, "ignore_users": [""]}
+{
+    "ollama_url": "http://ollama:11434/",
+    "model": "llama3.1:latest",
+    "capture_interval": 30,
+    "my_username": "Pee bee",
+    "other_usernames": [
+        "Timothy Quinn"
+    ],
+    "prompt": "im 30 years old a winner and grimmer and like talking about sailing boats. im a short messenger and user alot of slang words, name is PeeBee",
+    "ignored_lines": [
+        "Today v",
+        "Friday, September 13th v",
+        "(edited)"
+    ]
+}

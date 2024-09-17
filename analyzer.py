@@ -12,7 +12,7 @@ class TransparentWindow(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.min_size = QSize(200, 100)  # Initialize min_size here
+        self.min_size = QSize(300, 150)  # Changed minimum height to 150
         self.initUI()
         self.oldPos = None
         pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -63,20 +63,21 @@ class TransparentWindow(QWidget):
         try:
             logging.debug("Attempting to capture screen")
             x, y, w, h = self.geometry().getRect()
-            logging.debug(f"Capture area: x={x}, y={y}, w={w}, h={h}")
-            if w < self.min_size.width() or h < self.min_size.height():
-                logging.warning(f"Capture area too small. Minimum size: {self.min_size.width()}x{self.min_size.height()}")
-                return ""
+            logging.info(f"Capture size: {w}x{h}")  # Log capture size
+            
             screenshot = ImageGrab.grab(bbox=(x, y, x + w, y + h))
             screenshot = screenshot.resize((w * 2, h * 2), Image.LANCZOS)
             
             screenshot.save("debug_screenshot.png")
             logging.debug(f"Screenshot saved: debug_screenshot.png")
 
-            text = pytesseract.image_to_string(screenshot)
+            # Improve OCR accuracy
+            text = pytesseract.image_to_string(screenshot, config='--psm 6 --oem 3')
             logging.debug(f"Captured text length: {len(text)}")
             if not text:
                 logging.warning("No text captured by Tesseract")
+            else:
+                logging.debug(f"Captured text: {text[:100]}...")  # Log first 100 characters
             return text
         except Exception as e:
             logging.error(f"Error capturing screen: {str(e)}")

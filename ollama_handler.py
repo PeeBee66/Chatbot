@@ -37,43 +37,37 @@ class OllamaResponseHandler(QDialog):
 
     def _process(self):
         try:
+            logging.info("AI Response: Sending chat to AI...")
             self.status_label.setText("Sending chat to AI...")
-            for attempt in range(self.ollama_api.max_retries):
-                try:
-                    self.response = self.ollama_api.send_request(self.system_prompt, self.user_prompt, self.user_message)
-                    break
-                except Exception as e:
-                    if attempt < self.ollama_api.max_retries - 1:
-                        self.status_label.setText(f"Retry attempt {attempt + 1}...")
-                        time.sleep(2 ** attempt)  # Exponential backoff
-                    else:
-                        raise
-
-            if not self.response:
-                raise Exception("Failed to get response from Ollama after multiple attempts")
-
+            self.response = self.ollama_api.send_request(self.system_prompt, self.user_prompt, self.user_message)
+            
+            logging.info("AI Response: Reply generated")
             self.status_label.setText("Reply generated")
             time.sleep(1)
 
+            logging.info("AI Response: Finding chat box...")
             self.status_label.setText("Finding chat box...")
             pyautogui.click(self.chat_input_position.x, self.chat_input_position.y)
             time.sleep(1)
 
+            logging.info("AI Response: Entering chat text...")
             self.status_label.setText("Entering chat text...")
             pyautogui.typewrite(self.response)
             time.sleep(1)
 
+            logging.info("AI Response: Submitting chat text...")
             self.status_label.setText("Submitting chat text...")
             pyautogui.press('enter')
             time.sleep(1)
 
         except Exception as e:
             self.error = str(e)
+            logging.error(f"AI Response Error: {self.error}")
             self.status_label.setText(f"Error: {self.error}")
-            logging.error(f"Error in Ollama response: {self.error}")
             time.sleep(3)
 
         finally:
+            logging.info("AI Response: Process completed")
             self.close()
 
 def handle_ollama_response(parent, ollama_api, system_prompt, user_prompt, user_message, chat_input_position):

@@ -1,2 +1,7 @@
 ID,Conversation,Username,Message
-0001,first_conversation,,ee
+0001,captured_conversation,Harry,whats been going on
+0002,captured_conversation,Harry,"Hi buddy, How are you"
+0003,captured_conversation,Bob,Hi Mate
+0004,captured_conversation,Harry,whats been going on
+0005,captured_conversation,Harry,"Hi buddy, How are you"
+0006,captured_conversation,Bob,Hi Mate

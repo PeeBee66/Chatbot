@@ -71,6 +71,16 @@ class OllamaResponseHandler(QDialog):
             self.close()
 
 def handle_ollama_response(parent, ollama_api, system_prompt, user_prompt, user_message, chat_input_position):
-    handler = OllamaResponseHandler(parent, ollama_api, system_prompt, user_prompt, user_message, chat_input_position)
-    handler.process_response()
-    return handler.response, handler.error
+    try:
+        logging.info("Sending request to Ollama API...")
+        response = ollama_api.send_request(system_prompt, user_prompt, user_message)
+        
+        if response is None:
+            logging.warning("Ollama API returned None response")
+            return None, "Ollama API returned None response"
+        
+        logging.info("Ollama API response received")
+        return response, None
+    except Exception as e:
+        logging.error(f"Error in Ollama handler: {str(e)}")
+        return None, str(e)

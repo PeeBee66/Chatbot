@@ -1,6 +1,7 @@
 import requests
 import logging
 import time
+from requests.exceptions import RequestException, Timeout, ConnectionError
 
 class OllamaAPI:
     def __init__(self, base_url, model):
@@ -26,10 +27,15 @@ class OllamaAPI:
                 json_response = response.json()
                 logging.info(f"Ollama API response received for prompt: {text[:50]}...")
                 return json_response.get('response', '')
-            except requests.exceptions.RequestException as e:
-                logging.warning(f"Attempt {attempt + 1} failed: {str(e)}")
-                if attempt < self.max_retries - 1:
-                    time.sleep(2 ** attempt)  # Exponential backoff
-                else:
-                    logging.error(f"Error communicating with Ollama after {self.max_retries} attempts: {str(e)}")
+            except Timeout:
+                logging.warning(f"Attempt {attempt + 1} timed out. Retrying...")
+            except ConnectionError:
+                logging.warning(f"Attempt {attempt + 1} failed due to connection error. Retrying...")
+            except RequestException as e:
+                logging.error(f"Attempt {attempt + 1} failed with error: {str(e)}")
+                if attempt == self.max_retries - 1:
                     raise
+            
+            time.sleep(2 ** attempt)  # Exponential backoff
+        
+        raise Exception(f"Failed to get response from Ollama API after {self.max_retries} attempts")

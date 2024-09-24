@@ -2,7 +2,7 @@ import requests
 import json
 
 # Ollama API base URL
-base_url = "http://172.21.32.180:11434"
+base_url = "http://X.X.X.X:11434"
 
 # Function to generate a response
 def generate_response(prompt, model="llama3.1:latest", context=None):

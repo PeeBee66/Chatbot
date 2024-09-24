@@ -1,33 +1,20 @@
 import logging
-import time
-from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QTextEdit, QVBoxLayout, QPushButton, QWidget, QHBoxLayout, QLabel, QLineEdit
-from PyQt5.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal, QObject
-import pyautogui
-from utils import load_settings, save_settings, create_new_log_file
+from PyQt5.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QHBoxLayout, 
+                             QPushButton, QLabel, QLineEdit, QMessageBox, 
+                             QTextEdit, QApplication)
+from PyQt5.QtCore import Qt, pyqtSlot
+from utils import load_settings, save_settings, setup_logging
 from ollama import OllamaAPI
 from settings import SettingsDialog
 from analyzer import TransparentWindow
 from capture_handler import CaptureHandler
+from start_analyzer import StartAnalyzer
 from ai_handler import AIHandler
-
-class LogHandler(QObject):
-    log_message = pyqtSignal(str)
-
-class ThreadSafeLogger(logging.Handler):
-    def __init__(self, log_widget):
-        super().__init__()
-        self.log_handler = LogHandler()
-        self.log_handler.log_message.connect(log_widget.append)
-
-    def emit(self, record):
-        msg = self.format(record)
-        self.log_handler.log_message.emit(msg)
+from chat_position_handler import ChatPositionHandler
 
 class PipsChatAnalyserUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.is_analyzing = False
-        self.log_file = None
         self.ollama_api = None
         self.ai_handler = None
         self.capture_interval = 30  # seconds
@@ -35,13 +22,14 @@ class PipsChatAnalyserUI(QMainWindow):
         self.my_username = ""
         self.other_usernames = []
         self.ignored_patterns = []
-        self.chat_input_position = None
-        self.chat_input_position_display = None
+        self.chat_position_handler = ChatPositionHandler()
         self.initUI()
+        self.setup_logging()
         self.load_settings()
         self.init_analyzer()
         self.init_capture_handler()
         self.init_ai_handler()
+        self.init_start_analyzer()
 
     def initUI(self):
         self.setWindowTitle("PIPS CHAT ANALYSER")
@@ -89,20 +77,24 @@ class PipsChatAnalyserUI(QMainWindow):
         self.chat_log.setReadOnly(True)
         layout.addWidget(self.chat_log)
 
-        # Set up logging to the QTextEdit
-        self.setup_logging()
-
         # Last captured line display
         self.last_captured_line = QLineEdit(self)
         self.last_captured_line.setReadOnly(True)
         layout.addWidget(QLabel("Last Captured Line:"))
         layout.addWidget(self.last_captured_line)
 
-        # Chat input position display
-        self.chat_input_position_display = QLineEdit(self)
-        self.chat_input_position_display.setReadOnly(True)
-        layout.addWidget(QLabel("Chat text position:"))
-        layout.addWidget(self.chat_input_position_display)
+        # Chat Input Position
+        chat_position_layout = QHBoxLayout()
+        self.chat_x_input = QLineEdit(self)
+        self.chat_y_input = QLineEdit(self)
+        self.set_chat_position_button = QPushButton("Set Chat Position", self)
+        self.set_chat_position_button.clicked.connect(self.chat_position_handler.set_chat_position)
+        chat_position_layout.addWidget(QLabel("Chat X:"))
+        chat_position_layout.addWidget(self.chat_x_input)
+        chat_position_layout.addWidget(QLabel("Chat Y:"))
+        chat_position_layout.addWidget(self.chat_y_input)
+        chat_position_layout.addWidget(self.set_chat_position_button)
+        layout.addLayout(chat_position_layout)
 
         # Capture, Start, and Stop buttons
         button_layout = QHBoxLayout()
@@ -112,39 +104,21 @@ class PipsChatAnalyserUI(QMainWindow):
         
         self.start_button = QPushButton("Start", self)
         self.start_button.clicked.connect(self.start_analysis)
+        self.start_button.setEnabled(False)
         button_layout.addWidget(self.start_button)
 
         self.stop_button = QPushButton("Stop", self)
         self.stop_button.clicked.connect(self.stop_analysis)
+        self.stop_button.setEnabled(False)
         button_layout.addWidget(self.stop_button)
 
         layout.addLayout(button_layout)
 
+        # Connect the position_set signal
+        self.chat_position_handler.position_set.connect(self.update_chat_position_inputs)
+
     def setup_logging(self):
-        logger = logging.getLogger()
-        logger.setLevel(logging.INFO)
-        
-        # File handler
-        file_handler = logging.FileHandler('application_log.txt')
-        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-        logger.addHandler(file_handler)
-        
-        # Thread-safe handler for QTextEdit
-        text_handler = ThreadSafeLogger(self.chat_log)
-        text_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-        logger.addHandler(text_handler)
-
-    def init_analyzer(self):
-        self.analyzer_window = TransparentWindow()
-        self.analyzer_window.show()
-
-    def init_capture_handler(self):
-        self.capture_handler = CaptureHandler(self.analyzer_window, self.my_username, self.other_usernames, self.ignored_patterns)
-        self.capture_handler.capture_complete.connect(self.on_capture_complete)
-        self.capture_handler.new_message_detected.connect(self.on_new_message_detected)
-
-    def init_ai_handler(self):
-        self.ai_handler = AIHandler(self.ollama_api, self.prompt_text)
+        self.logger = setup_logging(self.chat_log)
 
     def load_settings(self):
         settings = load_settings()
@@ -156,9 +130,8 @@ class PipsChatAnalyserUI(QMainWindow):
         self.ignored_patterns = settings.get('ignored_lines', [])
         chat_input_position = settings.get('chat_input_position', {})
         if chat_input_position:
-            self.chat_input_position = pyautogui.Point(x=chat_input_position['x'], y=chat_input_position['y'])
-            if self.chat_input_position_display:
-                self.chat_input_position_display.setText(f"x={self.chat_input_position.x}, y={self.chat_input_position.y}")
+            self.chat_position_handler.set_chat_position_from_settings(chat_input_position['x'], chat_input_position['y'])
+            self.update_chat_position_inputs(chat_input_position['x'], chat_input_position['y'])
         
         self.background_prompt.setPlainText(self.prompt_text)
         self.my_username_input.setText(self.my_username)
@@ -167,11 +140,7 @@ class PipsChatAnalyserUI(QMainWindow):
         if self.ai_handler:
             self.ai_handler.set_background_prompt(self.prompt_text)
         
-        logging.info(f"Loaded prompt: {self.prompt_text}")
-        logging.info(f"Loaded my username: {self.my_username}")
-        logging.info(f"Loaded other usernames: {self.other_usernames}")
-        logging.info(f"Loaded ignored patterns: {self.ignored_patterns}")
-        logging.info(f"Loaded chat input position: {self.chat_input_position}")
+        logging.info(f"Settings loaded successfully")
 
     def save_settings(self):
         settings = {
@@ -182,7 +151,7 @@ class PipsChatAnalyserUI(QMainWindow):
             'model': self.ollama_api.model,
             'capture_interval': self.capture_interval,
             'ignored_lines': self.ignored_patterns,
-            'chat_input_position': {'x': self.chat_input_position.x, 'y': self.chat_input_position.y} if self.chat_input_position else {}
+            'chat_input_position': {'x': int(self.chat_x_input.text()), 'y': int(self.chat_y_input.text())} if self.chat_position_handler.has_position() else {}
         }
         save_settings(settings)
         self.load_settings()  # Reload settings after saving
@@ -193,61 +162,83 @@ class PipsChatAnalyserUI(QMainWindow):
         if settings_dialog.exec_():
             self.load_settings()
 
+    def init_analyzer(self):
+        self.analyzer_window = TransparentWindow()
+        self.analyzer_window.show()
+
+    def init_capture_handler(self):
+        self.capture_handler = CaptureHandler(self.analyzer_window, self.my_username, self.other_usernames, self.ignored_patterns)
+
+    def init_ai_handler(self):
+        self.ai_handler = AIHandler(self.ollama_api, self.prompt_text)
+
+    def init_start_analyzer(self):
+        self.start_analyzer = StartAnalyzer(self.analyzer_window, self.capture_handler, self.ai_handler, self.chat_position_handler, self.capture_interval)
+        self.start_analyzer.analysis_complete.connect(self.on_analysis_complete)
+        self.start_analyzer.ollama_response_ready.connect(self.handle_ollama_response)
+        self.start_analyzer.capture_complete.connect(self.on_capture_complete)
+
     def capture_analysis(self):
-        self.capture_button.setEnabled(False)
-        self.log_file = create_new_log_file()
-        logging.info(f"Screen capture output saved in: {self.log_file}")
-        self.capture_handler.set_log_file(self.log_file)
-        self.capture_handler.start_capture()
-
-    @pyqtSlot(list)
-    def on_capture_complete(self, processed_lines):
-        if processed_lines:
-            self.last_captured_line.setText(processed_lines[-1][1])
-        self.capture_button.setEnabled(True)
-
-    def start_analysis(self):
-        if not self.log_file:
-            logging.error("Error: No capture performed. Please capture first.")
-            QMessageBox.warning(self, "Error", "No capture performed. Please capture first.")
+        if not self.check_settings():
             return
         
-        self.is_analyzing = True
+        self.capture_button.setEnabled(False)
         self.start_button.setEnabled(False)
-        logging.info("System: Analysis started")
+        self.stop_button.setEnabled(False)
+        
+        self.start_analyzer.capture_restart()
 
-        if not self.chat_input_position:
-            QMessageBox.information(self, "Chat Input Position", "You have 5 seconds to click on the chat input field.")
-            QTimer.singleShot(5000, self.set_chat_input_position)
+    def start_analysis(self):
+        try:
+            self.start_analyzer.start_analysis()
+            self.start_button.setEnabled(False)
+            self.stop_button.setEnabled(True)
+        except ValueError as e:
+            QMessageBox.warning(self, "Error", str(e))
+
+    def stop_analysis(self):
+        self.start_analyzer.stop_analysis()
+        self.start_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+
+    def check_settings(self):
+        settings = load_settings()
+        empty_settings = [key for key, value in settings.items() if not value]
+        if empty_settings:
+            QMessageBox.warning(self, "Empty Settings", f"The following settings are empty: {', '.join(empty_settings)}")
+            return False
+        return True
+
+    @pyqtSlot(bool)
+    def on_capture_complete(self, success):
+        if success:
+            self.start_button.setEnabled(True)
+            logging.info("Capture completed successfully")
         else:
-            self.continuous_analysis()
+            QMessageBox.warning(self, "Capture Failed", "Failed to capture screen. Please try again.")
+        self.capture_button.setEnabled(True)
 
-    def set_chat_input_position(self):
-        self.chat_input_position = pyautogui.position()
-        self.chat_input_position_display.setText(f"x={self.chat_input_position.x}, y={self.chat_input_position.y}")
-        logging.info(f"Chat input position set to: Point(x={self.chat_input_position.x}, y={self.chat_input_position.y})")
-        self.continuous_analysis()
-
-    def continuous_analysis(self):
-        if self.is_analyzing:
-            logging.info(f"{self.capture_interval} sec before next screen refresh")
-            QTimer.singleShot(self.capture_interval * 1000, self.capture_handler.start_capture)
+    @pyqtSlot(list, bool)
+    def on_analysis_complete(self, new_text, waiting_for_ollama):
+        if new_text:
+            self.last_captured_line.setText(new_text[-1][1])
+        # Add any UI updates you want to perform after each analysis cycle
 
     @pyqtSlot(str, str)
-    def on_new_message_detected(self, username, message):
-        response, error = self.ai_handler.process_new_message(self.log_file, username, message, self.chat_input_position)
+    def handle_ollama_response(self, response, error):
         if error:
             QMessageBox.warning(self, "Error", f"An error occurred while processing the AI response: {error}")
         else:
-            self.capture_handler.append_to_csv(self.log_file, "ollama_response", "Ollama", response)
+            # Add any UI updates you want to perform after receiving Ollama's response
+            pass
 
-    def stop_analysis(self):
-        self.is_analyzing = False
-        self.start_button.setEnabled(True)
-        logging.info("System: Analysis stopped")
+    @pyqtSlot(int, int)
+    def update_chat_position_inputs(self, x, y):
+        self.chat_x_input.setText(str(x))
+        self.chat_y_input.setText(str(y))
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
+    app = QApplication([])
     main_window = PipsChatAnalyserUI()
     main_window.show()
-    sys.exit(app.exec_())
+    app.exec_()

@@ -1,10 +1,4 @@
-ID,Conversation,Message
-0001,first_conversation,Pee bee 4:27 Pm
-0002,first_conversation,hello Im ready
-0003,first_conversation,"I think you meant ""Pete Bee"" or perhaps something else entirely. Can I help clarify what you're trying to say?"
-0004,first_conversation,I'm here to help! What's on your mind?
-0005,ollama_response,
-0006,user_message,Pee bee 4:54PM
-0007,ollama_response,"Pilot or emergency vehicle, you say? That's likely an ambulance at 4:54 PM."
-0008,user_message,hi mate this is steve how are you
-0009,ollama_response,"Hi Steve, I'm doing well thanks. How can I assist you today?"
+ID,Conversation,Username,Message
+0001,captured_conversation,Bob,Hi harry
+0002,captured_conversation,Harry,What up bob?
+0003,captured_conversation,Bob,not much u

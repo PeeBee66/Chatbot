@@ -13,9 +13,12 @@ class CaptureThread(QThread):
         self.ignored_patterns = ignored_patterns
 
     def run(self):
-        logging.debug("CaptureThread started")
-        text = self.analyzer_window.capture_screen()
-        logging.debug(f"Raw captured text: {text[:100]}...")  # Log first 100 characters
-        processed_lines = process_captured_text(text, self.my_username, self.other_usernames, self.ignored_patterns)
-        logging.debug(f"Processed lines: {processed_lines}")
-        self.capture_complete.emit(processed_lines)
+        try:
+            logging.debug("CaptureThread started")
+            text = self.analyzer_window.capture_screen()
+            logging.debug(f"Raw captured text: {text[:100]}...")  # Log first 100 characters
+            processed_lines = process_captured_text(text, self.my_username, self.other_usernames, self.ignored_patterns)
+            logging.debug(f"Processed lines: {processed_lines}")
+            self.capture_complete.emit(processed_lines)
+        except Exception as e:
+            logging.error(f"Error in CaptureThread: {str(e)}", exc_info=True)

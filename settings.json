@@ -1,19 +1,15 @@
 {
-    "prompt": "im 30 years old a winner and grimmer and like talking about sailing boats. im a short messenger and user alot of slang words. Im talking to Tim he is my freiend anything he say i want you to be supportive of and reply with the question s he is asking",
-    "my_username": "Pee bee",
-    "other_usernames": [
-        "Timothy Quinn"
-    ],
     "ollama_url": "http://ollama:11434/",
     "model": "llama3.1:latest",
     "capture_interval": 30,
+    "my_username": "Harry",
+    "other_usernames": [
+        "Bob"
+    ],
+    "prompt": "I'm 30 years old, a winner and grimmer, and I love talking about sailing boats. I prefer using short messages filled with slang. When chatting with my mate Bob, I always aim to be supportive and respond directly to his questions. I've also known my friend Bob for years, and when I chat with him, I keep things vague, short, and avoid sounding like an AI. Conversations with Bob often touch on going to the footy this season",
     "ignored_lines": [
         "Today v",
         "Friday, September 13th v",
         "(edited)"
-    ],
-    "chat_input_position": {
-        "x": 554,
-        "y": 1070
-    }
+    ]
 }

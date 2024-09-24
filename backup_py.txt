@@ -1,48 +1,60 @@
-Date: 2024-09-17 12:50:29
+Date: 2024-09-24 13:04:39
 
 ai_handler.py:
 import logging
-import csv
+from PyQt5.QtCore import QObject, pyqtSignal, QThread
+from PyQt5.QtWidgets import QProgressDialog
 from ollama_handler import handle_ollama_response
 
-class AIHandler:
+class OllamaWorker(QThread):
+    finished = pyqtSignal(str, str)
+
+    def __init__(self, ollama_api, system_prompt, username, message, chat_input_position):
+        super().__init__()
+        self.ollama_api = ollama_api
+        self.system_prompt = system_prompt
+        self.username = username
+        self.message = message
+        self.chat_input_position = chat_input_position
+
+    def run(self):
+        response, error = handle_ollama_response(
+            None,  # We don't need the parent widget here
+            self.ollama_api,
+            self.system_prompt,
+            f"Please respond to the following message from {self.username}:",
+            self.message,
+            self.chat_input_position
+        )
+        self.finished.emit(response, error)
+
+class AIHandler(QObject):
+    response_ready = pyqtSignal(str, str)
+
     def __init__(self, ollama_api, background_prompt):
+        super().__init__()
         self.ollama_api = ollama_api
         self.background_prompt = background_prompt
 
     def process_new_message(self, log_file, username, message, chat_input_position):
-        # Get all messages from the CSV
-        with open(log_file, mode='r', newline='', encoding='utf-8') as file:
-            reader = csv.reader(file)
-            next(reader)  # Skip header
-            all_messages = list(reader)
+        # Create and show progress dialog
+        progress = QProgressDialog("Processing message...", "Cancel", 0, 0)
+        progress.setWindowTitle("AI Response")
+        progress.setModal(True)
+        progress.show()
 
-        # Construct the conversation history
-        conversation_history = [f"{row[2]}: {row[3]}" for row in all_messages]
-        
-        # Construct the system prompt
-        system_prompt = f"{self.background_prompt}\n\nCurrent chat:\n" + "\n".join(conversation_history)
+        # Create worker thread
+        self.worker = OllamaWorker(self.ollama_api, self.background_prompt, username, message, chat_input_position)
+        self.worker.finished.connect(self.on_worker_finished)
+        self.worker.finished.connect(progress.close)
+        self.worker.start()
 
-        # Get the last messages from the triggering user
-        user_messages = [msg for msg in reversed(all_messages) if msg[2] == username]
-        last_user_conversation = "\n".join([f"{msg[2]}: {msg[3]}" for msg in user_messages])
-
-        # Use the OllamaResponseHandler
-        response, error = handle_ollama_response(
-            None,  # We don't need the parent widget here
-            self.ollama_api,
-            system_prompt,
-            f"Please respond to the following conversation from {username}:",
-            last_user_conversation,
-            chat_input_position
-        )
-
+    def on_worker_finished(self, response, error):
         if error:
             logging.error(f"Error in Ollama response: {error}")
-            return None, error
         else:
             logging.info(f"Ollama's response: {response}")
-            return response, None
+        self.response_ready.emit(response, error)
 
     def set_background_prompt(self, prompt):
         self.background_prompt = prompt
@@ -120,28 +132,37 @@ def analyze_conversation(chat_history, background_prompt, ollama_api):
 
 analyzer.py:
 import logging
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QSizeGrip
-from PyQt5.QtCore import Qt, pyqtSignal, QSize
-from PyQt5.QtGui import QPainter, QColor, QPen
 import pytesseract
-from PIL import ImageGrab, Image
-
-logging.basicConfig(filename='chat_analyzer_log.txt', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+from PIL import Image, ImageGrab, ImageOps, ImageEnhance
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QSizeGrip, QPushButton
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QRect
+from PyQt5.QtGui import QPainter, QColor, QPen
+import traceback
 
 class TransparentWindow(QWidget):
     text_captured = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
-        self.min_size = QSize(300, 100)  # Increased minimum size
+        self.min_size = QSize(400, 300)
+        self.border_width = 2
+        self.corner_size = 10
+        self.capture_inset = 5  # Inset for the dotted line
+        self.capture_reduction = 1  # Reduction of actual capture area (1 pixel ≈ 0.25mm)
         self.initUI()
         self.oldPos = None
+        
         pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
         logging.info(f"Tesseract path set to: {pytesseract.pytesseract.tesseract_cmd}")
+        
+        try:
+            logging.info(f"Tesseract version: {pytesseract.get_tesseract_version()}")
+        except Exception as e:
+            logging.error(f"Error getting Tesseract version: {str(e)}")
 
     def initUI(self):
         self.setWindowTitle('Chat Analyzer')
-        self.setGeometry(100, 100, 400, 300)
+        self.setGeometry(100, 100, 500, 400)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMinimumSize(self.min_size)
@@ -149,17 +170,35 @@ class TransparentWindow(QWidget):
         layout = QVBoxLayout()
         self.setLayout(layout)
 
+        # Add close button
+        self.close_button = QPushButton("X", self)
+        self.close_button.setStyleSheet("background-color: red; color: white;")
+        self.close_button.setFixedSize(20, 20)
+        self.close_button.clicked.connect(self.close)
+        
         size_grip = QSizeGrip(self)
         layout.addWidget(size_grip, 0, Qt.AlignBottom | Qt.AlignRight)
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Draw semi-transparent background
         painter.setBrush(QColor(0, 0, 0, 50))
         painter.setPen(Qt.NoPen)
         painter.drawRect(self.rect())
-        painter.setPen(QPen(QColor(255, 255, 255), 2, Qt.SolidLine))
-        painter.drawRect(self.rect().adjusted(1, 1, -1, -1))
+        
+        # Draw border
+        painter.setPen(QPen(QColor(255, 255, 255), self.border_width, Qt.SolidLine))
+        painter.drawRect(self.rect().adjusted(self.border_width//2, self.border_width//2, -self.border_width//2, -self.border_width//2))
+        
+        # Draw capture area with light grey, thin line
+        capture_area = self.get_visible_capture_area()
+        painter.setPen(QPen(QColor(200, 200, 200), 1, Qt.DashLine))
+        painter.drawRect(capture_area)
+
+        # Position close button
+        self.close_button.move(self.width() - 25, 5)
 
     def mousePressEvent(self, event):
         self.oldPos = event.globalPos()
@@ -167,42 +206,69 @@ class TransparentWindow(QWidget):
     def mouseMoveEvent(self, event):
         if self.oldPos:
             delta = event.globalPos() - self.oldPos
-            new_pos = self.pos() + delta
-            self.move(new_pos)
+            self.move(self.pos() + delta)
             self.oldPos = event.globalPos()
 
     def mouseReleaseEvent(self, event):
         self.oldPos = None
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self.width() < self.min_size.width() or self.height() < self.min_size.height():
-            self.setGeometry(self.x(), self.y(), max(self.width(), self.min_size.width()), max(self.height(), self.min_size.height()))
-            logging.warning(f"Window resized to minimum size: {self.size()}")
+    def get_visible_capture_area(self):
+        return self.rect().adjusted(
+            self.border_width + self.capture_inset,
+            self.border_width + self.capture_inset,
+            -self.corner_size - self.border_width - self.capture_inset,
+            -self.corner_size - self.border_width - self.capture_inset
+        )
+
+    def get_actual_capture_area(self):
+        visible_area = self.get_visible_capture_area()
+        return visible_area.adjusted(
+            self.capture_reduction,
+            self.capture_reduction,
+            -self.capture_reduction,
+            -self.capture_reduction
+        )
 
     def capture_screen(self):
         try:
-            logging.debug("Attempting to capture screen")
-            x, y, w, h = self.geometry().getRect()
-            logging.info(f"Capture size: {w}x{h}")  # Log capture size
+            logging.debug("Entering capture_screen method")
+            
+            capture_area = self.get_actual_capture_area()
+            top_left = self.mapToGlobal(capture_area.topLeft())
+            x, y = top_left.x(), top_left.y()
+            w, h = capture_area.width(), capture_area.height()
+            logging.info(f"Capture coordinates: x={x}, y={y}, w={w}, h={h}")
             
             screenshot = ImageGrab.grab(bbox=(x, y, x + w, y + h))
-            screenshot = screenshot.resize((w * 2, h * 2), Image.LANCZOS)
-            
             screenshot.save("debug_screenshot.png")
-            logging.debug(f"Screenshot saved: debug_screenshot.png")
-
-            # Improve OCR accuracy
-            text = pytesseract.image_to_string(screenshot, config='--psm 6 --oem 3')
-            logging.debug(f"Captured text length: {len(text)}")
+            
+            screenshot = screenshot.convert('L')
+            screenshot = ImageOps.invert(screenshot)
+            enhancer = ImageEnhance.Contrast(screenshot)
+            screenshot = enhancer.enhance(2)
+            
+            custom_config = r'--oem 3 --psm 6'
+            text = pytesseract.image_to_string(screenshot, config=custom_config)
+            
+            logging.debug(f"OCR completed. Captured text length: {len(text)}")
             if not text:
                 logging.warning("No text captured by Tesseract")
             else:
-                logging.debug(f"Captured text: {text[:100]}...")  # Log first 100 characters
+                logging.debug(f"Captured text: {text}")
+                self.text_captured.emit(text)
+            
             return text
         except Exception as e:
-            logging.error(f"Error capturing screen: {str(e)}")
+            logging.error(f"Unexpected error in capture_screen: {str(e)}")
+            logging.error(traceback.format_exc())
             return ""
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+
+    def closeEvent(self, event):
+        logging.info("Closing TransparentWindow")
+        super().closeEvent(event)
 
 backup_py.py:
 import os
@@ -252,19 +318,20 @@ class CaptureThread(QThread):
         self.ignored_patterns = ignored_patterns
 
     def run(self):
-        logging.debug("CaptureThread started")
-        text = self.analyzer_window.capture_screen()
-        logging.debug(f"Raw captured text: {text[:100]}...")  # Log first 100 characters
-        processed_lines = process_captured_text(text, self.my_username, self.other_usernames, self.ignored_patterns)
-        logging.debug(f"Processed lines: {processed_lines}")
-        self.capture_complete.emit(processed_lines)
+        try:
+            logging.debug("CaptureThread started")
+            text = self.analyzer_window.capture_screen()
+            logging.debug(f"Raw captured text: {text[:100]}...")  # Log first 100 characters
+            processed_lines = process_captured_text(text, self.my_username, self.other_usernames, self.ignored_patterns)
+            logging.debug(f"Processed lines: {processed_lines}")
+            self.capture_complete.emit(processed_lines)
+        except Exception as e:
+            logging.error(f"Error in CaptureThread: {str(e)}", exc_info=True)
 
 capture_handler.py:
 import logging
-import csv
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
-from capture import CaptureThread
-from utils import append_to_csv
+from utils import process_captured_text, append_to_csv, get_last_messages
 
 class CaptureHandler(QObject):
     capture_complete = pyqtSignal(list)
@@ -277,69 +344,145 @@ class CaptureHandler(QObject):
         self.other_usernames = other_usernames
         self.ignored_patterns = ignored_patterns
         self.log_file = None
+        self.last_processed_message = None
+
+    def set_log_file(self, log_file):
+        self.log_file = log_file
+        logging.info(f"Log file set to: {log_file}")
+
+    def reset_capture_state(self):
+        self.last_processed_message = None
+        logging.info("Capture state reset")
 
     def start_capture(self):
-        logging.info("System: Capture initiated")
-        self.capture_thread = CaptureThread(self.analyzer_window, self.my_username, self.other_usernames, self.ignored_patterns)
-        self.capture_thread.capture_complete.connect(self.on_capture_complete)
-        self.capture_thread.start()
+        try:
+            logging.info("System: Capture initiated")
+            text = self.analyzer_window.capture_screen()
+            self.handle_captured_text(text)
+        except Exception as e:
+            logging.error(f"Error in start_capture: {str(e)}", exc_info=True)
 
-    @pyqtSlot(list)
-    def on_capture_complete(self, processed_lines):
-        logging.debug(f"Received processed lines: {processed_lines}")
-        if processed_lines:
-            for username, message in processed_lines:
-                append_to_csv(self.log_file, "first_conversation", username, message)
-            logging.info(f"Text added to chat log. Last line: {processed_lines[-1][1]}")
-        else:
-            logging.warning("No processed lines received")
-        
+    def handle_captured_text(self, text):
+        processed_lines = process_captured_text(text, self.my_username, self.other_usernames, self.ignored_patterns)
+        logging.info(f"Processed {len(processed_lines)} lines")
         self.capture_complete.emit(processed_lines)
 
     def check_for_new_messages(self, processed_lines):
         new_messages = self.get_new_messages(processed_lines)
         if new_messages:
             for username, message in new_messages:
-                logging.info(f"New user message detected: {username}: {message}")
-                append_to_csv(self.log_file, "user_message", username, message)
-                
                 if username in self.other_usernames:
                     self.new_message_detected.emit(username, message)
-            
             return new_messages[-1][1]  # Return the last captured line
         else:
             logging.info("No new user messages detected.")
             return None
 
     def get_new_messages(self, processed_lines):
-        existing_messages = set()
-        with open(self.log_file, mode='r', newline='', encoding='utf-8') as file:
-            reader = csv.reader(file)
-            next(reader)  # Skip header
-            for row in reader:
-                existing_messages.add((row[2], row[3]))  # username, message
-
+        if not self.last_processed_message:
+            return processed_lines
+        
         new_messages = []
-        for username, message in processed_lines:
-            if (username, message) not in existing_messages:
-                new_messages.append((username, message))
-                existing_messages.add((username, message))
-
+        found_last_message = False
+        for message in processed_lines:
+            if found_last_message:
+                new_messages.append(message)
+            elif message == self.last_processed_message:
+                found_last_message = True
+        
         return new_messages
 
-    def set_log_file(self, log_file):
-        self.log_file = log_file
+chat_position_handler.py:
+import logging
+from PyQt5.QtCore import QObject, pyqtSignal, QTimer
+from PyQt5.QtWidgets import QMessageBox
+import pyautogui
+
+class ChatPositionHandler(QObject):
+    position_set = pyqtSignal(int, int)
+
+    def __init__(self):
+        super().__init__()
+        self.chat_input_position = None
+
+    def set_chat_position(self):
+        QMessageBox.information(None, "Set Chat Position", "Click on the chat input field in 3 seconds.")
+        QTimer.singleShot(3000, self._capture_chat_position)
+
+    def _capture_chat_position(self):
+        self.chat_input_position = pyautogui.position()
+        logging.info(f"Chat input position set to: x={self.chat_input_position.x}, y={self.chat_input_position.y}")
+        QMessageBox.information(None, "Success", "Chat position has been set.")
+        self.position_set.emit(self.chat_input_position.x, self.chat_input_position.y)
+
+    def get_chat_position(self):
+        return self.chat_input_position
+
+    def set_chat_position_from_settings(self, x, y):
+        self.chat_input_position = pyautogui.Point(x=x, y=y)
+
+    def has_position(self):
+        return self.chat_input_position is not None
+
+    def click_chat_input(self):
+        if self.chat_input_position:
+            pyautogui.click(self.chat_input_position.x, self.chat_input_position.y)
+        else:
+            logging.warning("Attempted to click chat input, but position is not set.")
+
+    def type_message(self, message):
+        if self.chat_input_position and message:
+            self.click_chat_input()
+            pyautogui.typewrite(str(message))  # Convert to string for safety
+            pyautogui.press('enter')
+        else:
+            logging.warning("Attempted to type message, but chat input position is not set or message is empty.")
 
 Main.py:
 import sys
-from PyQt5.QtWidgets import QApplication
+import logging
+import traceback
+from PyQt5.QtWidgets import QApplication, QMessageBox
 from ui import PipsChatAnalyserUI
 
+def setup_logging():
+    logging.basicConfig(
+        filename='app.log',
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    console = logging.StreamHandler()
+    console.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(name)-12s: %(levelname)-8s %(message)s')
+    console.setFormatter(formatter)
+    logging.getLogger('').addHandler(console)
+
+def exception_hook(exctype, value, tb):
+    logging.critical('Unhandled exception:', exc_info=(exctype, value, tb))
+    error_msg = f"An unhandled exception occurred:\n{exctype.__name__}: {str(value)}\n\nTraceback:\n{''.join(traceback.format_tb(tb))}"
+    print(error_msg)  # Print to console as well
+    QMessageBox.critical(None, "Critical Error", error_msg)
+    sys.__excepthook__(exctype, value, tb)
+
 def main():
-    app = QApplication(sys.argv)
-    main_window = PipsChatAnalyserUI()
-    main_window.show()
-    sys.exit(app.exec_())
+    setup_logging()
+    sys.excepthook = exception_hook
+    logging.info("Starting PIPS CHAT ANALYSER")
+    
+    try:
+        app = QApplication(sys.argv)
+    except Exception as e:
+        logging.critical(f"Error creating QApplication: {str(e)}", exc_info=True)
+        print(f"Error creating QApplication: {str(e)}")
+        return
+
+    try:
+        main_window = PipsChatAnalyserUI()
+        main_window.show()
+        sys.exit(app.exec_())
+    except Exception as e:
+        logging.critical(f"Critical error in main application: {str(e)}", exc_info=True)
+        print(f"Critical error in main application: {str(e)}")
 
 if __name__ == "__main__":
     main()
@@ -348,6 +491,7 @@ ollama.py:
 import requests
 import logging
 import time
+from requests.exceptions import RequestException, Timeout, ConnectionError
 
 class OllamaAPI:
     def __init__(self, base_url, model):
@@ -373,13 +517,18 @@ class OllamaAPI:
                 json_response = response.json()
                 logging.info(f"Ollama API response received for prompt: {text[:50]}...")
                 return json_response.get('response', '')
-            except requests.exceptions.RequestException as e:
-                logging.warning(f"Attempt {attempt + 1} failed: {str(e)}")
-                if attempt < self.max_retries - 1:
-                    time.sleep(2 ** attempt)  # Exponential backoff
-                else:
-                    logging.error(f"Error communicating with Ollama after {self.max_retries} attempts: {str(e)}")
+            except Timeout:
+                logging.warning(f"Attempt {attempt + 1} timed out. Retrying...")
+            except ConnectionError:
+                logging.warning(f"Attempt {attempt + 1} failed due to connection error. Retrying...")
+            except RequestException as e:
+                logging.error(f"Attempt {attempt + 1} failed with error: {str(e)}")
+                if attempt == self.max_retries - 1:
                     raise
+            
+            time.sleep(2 ** attempt)  # Exponential backoff
+        
+        raise Exception(f"Failed to get response from Ollama API after {self.max_retries} attempts")
 
 ollama_handler.py:
 import time
@@ -455,9 +604,19 @@ class OllamaResponseHandler(QDialog):
             self.close()
 
 def handle_ollama_response(parent, ollama_api, system_prompt, user_prompt, user_message, chat_input_position):
-    handler = OllamaResponseHandler(parent, ollama_api, system_prompt, user_prompt, user_message, chat_input_position)
-    handler.process_response()
-    return handler.response, handler.error
+    try:
+        logging.info("Sending request to Ollama API...")
+        response = ollama_api.send_request(system_prompt, user_prompt, user_message)
+        
+        if response is None:
+            logging.warning("Ollama API returned None response")
+            return None, "Ollama API returned None response"
+        
+        logging.info("Ollama API response received")
+        return response, None
+    except Exception as e:
+        logging.error(f"Error in Ollama handler: {str(e)}")
+        return None, str(e)
 
 settings.py:
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit, QPushButton, 
@@ -571,28 +730,17 @@ class SettingsDialog(QDialog):
 ui.py:
 import logging
 import time
-from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QTextEdit, QVBoxLayout, QPushButton, QWidget, QHBoxLayout, QLabel, QLineEdit
-from PyQt5.QtCore import Qt, QTimer, pyqtSlot, pyqtSignal, QObject
-import pyautogui
-from utils import load_settings, save_settings, create_new_log_file
+from PyQt5.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QHBoxLayout, 
+                             QPushButton, QLabel, QLineEdit, QMessageBox, 
+                             QTextEdit, QApplication)
+from PyQt5.QtCore import Qt, QTimer, pyqtSlot, QSettings
+from utils import load_settings, save_settings, create_new_log_file, setup_logging, append_to_csv
 from ollama import OllamaAPI
 from settings import SettingsDialog
 from analyzer import TransparentWindow
 from capture_handler import CaptureHandler
 from ai_handler import AIHandler
-
-class LogHandler(QObject):
-    log_message = pyqtSignal(str)
-
-class ThreadSafeLogger(logging.Handler):
-    def __init__(self, log_widget):
-        super().__init__()
-        self.log_handler = LogHandler()
-        self.log_handler.log_message.connect(log_widget.append)
-
-    def emit(self, record):
-        msg = self.format(record)
-        self.log_handler.log_message.emit(msg)
+from chat_position_handler import ChatPositionHandler
 
 class PipsChatAnalyserUI(QMainWindow):
     def __init__(self):
@@ -606,9 +754,12 @@ class PipsChatAnalyserUI(QMainWindow):
         self.my_username = ""
         self.other_usernames = []
         self.ignored_patterns = []
-        self.chat_input_position = None
-        self.chat_input_position_display = None
+        self.chat_position_handler = ChatPositionHandler()
+        self.capture_timer = QTimer(self)
+        self.capture_timer.timeout.connect(self.perform_capture)
+        self.waiting_for_ollama = False
         self.initUI()
+        self.setup_logging()
         self.load_settings()
         self.init_analyzer()
         self.init_capture_handler()
@@ -660,20 +811,24 @@ class PipsChatAnalyserUI(QMainWindow):
         self.chat_log.setReadOnly(True)
         layout.addWidget(self.chat_log)
 
-        # Set up logging to the QTextEdit
-        self.setup_logging()
-
         # Last captured line display
         self.last_captured_line = QLineEdit(self)
         self.last_captured_line.setReadOnly(True)
         layout.addWidget(QLabel("Last Captured Line:"))
         layout.addWidget(self.last_captured_line)
 
-        # Chat input position display
-        self.chat_input_position_display = QLineEdit(self)
-        self.chat_input_position_display.setReadOnly(True)
-        layout.addWidget(QLabel("Chat text position:"))
-        layout.addWidget(self.chat_input_position_display)
+        # Chat Input Position
+        chat_position_layout = QHBoxLayout()
+        self.chat_x_input = QLineEdit(self)
+        self.chat_y_input = QLineEdit(self)
+        self.set_chat_position_button = QPushButton("Set Chat Position", self)
+        self.set_chat_position_button.clicked.connect(self.chat_position_handler.set_chat_position)
+        chat_position_layout.addWidget(QLabel("Chat X:"))
+        chat_position_layout.addWidget(self.chat_x_input)
+        chat_position_layout.addWidget(QLabel("Chat Y:"))
+        chat_position_layout.addWidget(self.chat_y_input)
+        chat_position_layout.addWidget(self.set_chat_position_button)
+        layout.addLayout(chat_position_layout)
 
         # Capture, Start, and Stop buttons
         button_layout = QHBoxLayout()
@@ -687,35 +842,16 @@ class PipsChatAnalyserUI(QMainWindow):
 
         self.stop_button = QPushButton("Stop", self)
         self.stop_button.clicked.connect(self.stop_analysis)
+        self.stop_button.setEnabled(False)
         button_layout.addWidget(self.stop_button)
 
         layout.addLayout(button_layout)
 
+        # Connect the position_set signal
+        self.chat_position_handler.position_set.connect(self.update_chat_position_inputs)
+
     def setup_logging(self):
-        logger = logging.getLogger()
-        logger.setLevel(logging.INFO)
-        
-        # File handler
-        file_handler = logging.FileHandler('application_log.txt')
-        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-        logger.addHandler(file_handler)
-        
-        # Thread-safe handler for QTextEdit
-        text_handler = ThreadSafeLogger(self.chat_log)
-        text_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-        logger.addHandler(text_handler)
-
-    def init_analyzer(self):
-        self.analyzer_window = TransparentWindow()
-        self.analyzer_window.show()
-
-    def init_capture_handler(self):
-        self.capture_handler = CaptureHandler(self.analyzer_window, self.my_username, self.other_usernames, self.ignored_patterns)
-        self.capture_handler.capture_complete.connect(self.on_capture_complete)
-        self.capture_handler.new_message_detected.connect(self.on_new_message_detected)
-
-    def init_ai_handler(self):
-        self.ai_handler = AIHandler(self.ollama_api, self.prompt_text)
+        self.logger = setup_logging(self.chat_log)
 
     def load_settings(self):
         settings = load_settings()
@@ -727,9 +863,8 @@ class PipsChatAnalyserUI(QMainWindow):
         self.ignored_patterns = settings.get('ignored_lines', [])
         chat_input_position = settings.get('chat_input_position', {})
         if chat_input_position:
-            self.chat_input_position = pyautogui.Point(x=chat_input_position['x'], y=chat_input_position['y'])
-            if self.chat_input_position_display:
-                self.chat_input_position_display.setText(f"x={self.chat_input_position.x}, y={self.chat_input_position.y}")
+            self.chat_position_handler.set_chat_position_from_settings(chat_input_position['x'], chat_input_position['y'])
+            self.update_chat_position_inputs(chat_input_position['x'], chat_input_position['y'])
         
         self.background_prompt.setPlainText(self.prompt_text)
         self.my_username_input.setText(self.my_username)
@@ -742,7 +877,8 @@ class PipsChatAnalyserUI(QMainWindow):
         logging.info(f"Loaded my username: {self.my_username}")
         logging.info(f"Loaded other usernames: {self.other_usernames}")
         logging.info(f"Loaded ignored patterns: {self.ignored_patterns}")
-        logging.info(f"Loaded chat input position: {self.chat_input_position}")
+        logging.info(f"Loaded chat input position: {self.chat_position_handler.get_chat_position()}")
+        logging.info(f"Loaded capture interval: {self.capture_interval} seconds")
 
     def save_settings(self):
         settings = {
@@ -753,7 +889,7 @@ class PipsChatAnalyserUI(QMainWindow):
             'model': self.ollama_api.model,
             'capture_interval': self.capture_interval,
             'ignored_lines': self.ignored_patterns,
-            'chat_input_position': {'x': self.chat_input_position.x, 'y': self.chat_input_position.y} if self.chat_input_position else {}
+            'chat_input_position': {'x': int(self.chat_x_input.text()), 'y': int(self.chat_y_input.text())} if self.chat_position_handler.has_position() else {}
         }
         save_settings(settings)
         self.load_settings()  # Reload settings after saving
@@ -764,18 +900,31 @@ class PipsChatAnalyserUI(QMainWindow):
         if settings_dialog.exec_():
             self.load_settings()
 
-    def capture_analysis(self):
-        self.capture_button.setEnabled(False)
-        self.log_file = create_new_log_file()
-        logging.info(f"Screen capture output saved in: {self.log_file}")
-        self.capture_handler.set_log_file(self.log_file)
-        self.capture_handler.start_capture()
+    def init_analyzer(self):
+        self.analyzer_window = TransparentWindow()
+        self.analyzer_window.show()
 
-    @pyqtSlot(list)
-    def on_capture_complete(self, processed_lines):
-        if processed_lines:
-            self.last_captured_line.setText(processed_lines[-1][1])
-        self.capture_button.setEnabled(True)
+    def init_capture_handler(self):
+        self.capture_handler = CaptureHandler(self.analyzer_window, self.my_username, self.other_usernames, self.ignored_patterns)
+        self.capture_handler.capture_complete.connect(self.on_capture_complete)
+        self.capture_handler.new_message_detected.connect(self.on_new_message_detected)
+
+    def init_ai_handler(self):
+        self.ai_handler = AIHandler(self.ollama_api, self.prompt_text)
+        self.ai_handler.response_ready.connect(self.handle_ai_response)
+
+    def capture_analysis(self):
+        try:
+            self.capture_button.setEnabled(False)
+            self.log_file = create_new_log_file()
+            logging.info(f"New CSV file created: {self.log_file}")
+            self.capture_handler.set_log_file(self.log_file)
+            self.capture_handler.reset_capture_state()  # Reset the capture state
+            self.capture_handler.start_capture()
+        except Exception as e:
+            logging.error(f"Error during capture: {str(e)}")
+            QMessageBox.critical(self, "Error", f"An error occurred during capture: {str(e)}")
+            self.capture_button.setEnabled(True)
 
     def start_analysis(self):
         if not self.log_file:
@@ -783,45 +932,85 @@ class PipsChatAnalyserUI(QMainWindow):
             QMessageBox.warning(self, "Error", "No capture performed. Please capture first.")
             return
         
+        # Check if all settings are not empty
+        if not self.check_settings():
+            return
+
         self.is_analyzing = True
         self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
         logging.info("System: Analysis started")
 
-        if not self.chat_input_position:
-            QMessageBox.information(self, "Chat Input Position", "You have 5 seconds to click on the chat input field.")
-            QTimer.singleShot(5000, self.set_chat_input_position)
-        else:
-            self.continuous_analysis()
+        if not self.chat_position_handler.has_position():
+            QMessageBox.information(self, "Chat Input Position", "Please set the chat input position first.")
+            return
 
-    def set_chat_input_position(self):
-        self.chat_input_position = pyautogui.position()
-        self.chat_input_position_display.setText(f"x={self.chat_input_position.x}, y={self.chat_input_position.y}")
-        logging.info(f"Chat input position set to: Point(x={self.chat_input_position.x}, y={self.chat_input_position.y})")
-        self.continuous_analysis()
+        self.capture_timer.start(self.capture_interval * 1000)
+        logging.info(f"System will start a scan in {self.capture_interval} seconds for new Text")
 
-    def continuous_analysis(self):
-        if self.is_analyzing:
-            logging.info(f"{self.capture_interval} sec before next screen refresh")
-            QTimer.singleShot(self.capture_interval * 1000, self.capture_handler.start_capture)
-
-    @pyqtSlot(str, str)
-    def on_new_message_detected(self, username, message):
-        response, error = self.ai_handler.process_new_message(self.log_file, username, message, self.chat_input_position)
-        if error:
-            QMessageBox.warning(self, "Error", f"An error occurred while processing the AI response: {error}")
-        else:
-            self.capture_handler.append_to_csv(self.log_file, "ollama_response", "Ollama", response)
+    def check_settings(self):
+        settings = load_settings()
+        empty_settings = [key for key, value in settings.items() if not value]
+        if empty_settings:
+            QMessageBox.warning(self, "Empty Settings", f"The following settings are empty: {', '.join(empty_settings)}")
+            return False
+        return True
 
     def stop_analysis(self):
         self.is_analyzing = False
+        self.capture_timer.stop()
         self.start_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
         logging.info("System: Analysis stopped")
 
+    def perform_capture(self):
+        if not self.is_analyzing or self.waiting_for_ollama:
+            return
+
+        logging.info(f"{self.capture_interval} sec before next screen refresh")
+        self.capture_handler.start_capture()
+
+    @pyqtSlot(list)
+    def on_capture_complete(self, processed_lines):
+        if processed_lines:
+            self.last_captured_line.setText(processed_lines[-1][1])
+            logging.info("Captured text added to CSV")
+            for username, message in processed_lines:
+                append_to_csv(self.log_file, "captured_conversation", username, message)
+        else:
+            logging.info("No text captured")
+
+        self.capture_button.setEnabled(True)
+        self.start_button.setEnabled(True)
+        logging.info("Capture completed, start button enabled")
+
+    @pyqtSlot(str, str)
+    def on_new_message_detected(self, username, message):
+        self.ai_handler.process_new_message(self.log_file, username, message, self.chat_position_handler.get_chat_position())
+
+    @pyqtSlot(str, str)
+    def handle_ai_response(self, response, error):
+        self.waiting_for_ollama = False
+        if error:
+            QMessageBox.warning(self, "Error", f"An error occurred while processing the AI response: {error}")
+        else:
+            self.chat_position_handler.type_message(response)
+            append_to_csv(self.log_file, "ollama_response", "Ollama", response)
+            logging.info(f"Reply sent to {self.other_usernames}")
+
+        if self.is_analyzing:
+            self.capture_timer.start(self.capture_interval * 1000)
+
+    @pyqtSlot(int, int)
+    def update_chat_position_inputs(self, x, y):
+        self.chat_x_input.setText(str(x))
+        self.chat_y_input.setText(str(y))
+
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
+    app = QApplication([])
     main_window = PipsChatAnalyserUI()
     main_window.show()
-    sys.exit(app.exec_())
+    app.exec_()
 
 utils.py:
 import json
@@ -829,7 +1018,7 @@ import os
 import csv
 import logging
 import re
-from PyQt5.QtCore import QSettings
+from PyQt5.QtCore import QSettings, QObject, pyqtSignal
 from datetime import datetime
 
 def load_settings():
@@ -886,15 +1075,29 @@ def append_to_csv(log_file, conversation_type, username, message):
         
         writer.writerow([f"{last_id + 1:04d}", conversation_type, username, message])
 
-class QTextEditLogger(logging.Handler):
+def get_last_messages(log_file, n=10):
+    try:
+        with open(log_file, mode='r', newline='', encoding='utf-8') as file:
+            reader = csv.reader(file)
+            next(reader)  # Skip header
+            messages = list(reader)
+            return [(row[2], row[3]) for row in messages[-n:]]
+    except Exception as e:
+        logging.error(f"Error reading last messages from CSV: {str(e)}")
+        return []
+
+class QTextEditLogger(logging.Handler, QObject):
+    log_message = pyqtSignal(str)
+
     def __init__(self, widget):
         super().__init__()
+        QObject.__init__(self)
         self.widget = widget
-        self.widget.setReadOnly(True)
+        self.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 
     def emit(self, record):
         msg = self.format(record)
-        self.widget.append(msg)
+        self.log_message.emit(msg)
 
 def setup_logging(log_widget):
     logger = logging.getLogger()
@@ -907,8 +1110,10 @@ def setup_logging(log_widget):
     
     # Widget handler
     widget_handler = QTextEditLogger(log_widget)
-    widget_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    widget_handler.log_message.connect(log_widget.append)
     logger.addHandler(widget_handler)
+
+    return logger
 
 def is_ignored_line(line, ignored_patterns):
     # Check if the line matches any of the ignored patterns
@@ -933,27 +1138,25 @@ def process_captured_text(text, my_username, other_usernames, ignored_patterns):
     logging.debug(f"Processing captured text: {text[:100]}...")  # Log first 100 characters
     lines = text.split('\n')
     processed_lines = []
-    all_usernames = [my_username] + other_usernames
-    
+    current_username = None
+
     for line in lines:
         line = line.strip()
-        if line and not is_ignored_line(line, ignored_patterns):
-            username = ''
-            message = line
-            
-            for name in all_usernames:
-                if line.startswith(name):
-                    username = name
-                    message = line[len(name):].strip()
-                    break
-            
-            # Replace '|' with 'I' at the beginning of the line
-            message = re.sub(r'^[|]', 'I', message)
-            # Replace isolated '|' with 'I'
-            message = re.sub(r'\s[|]\s', ' I ', message)
-            
-            processed_lines.append((username, message))
-    
+        if not line or is_ignored_line(line, ignored_patterns):
+            continue
+
+        for username in [my_username] + other_usernames:
+            if line.lower().startswith(username.lower()):
+                current_username = username
+                message = line[len(username):].strip()
+                if message.startswith(':'):
+                    message = message[1:].strip()
+                processed_lines.append((current_username, message))
+                break
+        else:
+            if current_username:
+                processed_lines.append((current_username, line))
+
     logging.debug(f"Processed {len(processed_lines)} lines")
     return processed_lines
 

@@ -3,7 +3,7 @@ import os
 import csv
 import logging
 import re
-from PyQt5.QtCore import QSettings
+from PyQt5.QtCore import QSettings, QObject, pyqtSignal
 from datetime import datetime
 
 def load_settings():
@@ -60,29 +60,16 @@ def append_to_csv(log_file, conversation_type, username, message):
         
         writer.writerow([f"{last_id + 1:04d}", conversation_type, username, message])
 
-class QTextEditLogger(logging.Handler):
-    def __init__(self, widget):
-        super().__init__()
-        self.widget = widget
-        self.widget.setReadOnly(True)
-
-    def emit(self, record):
-        msg = self.format(record)
-        self.widget.append(msg)
-
-def setup_logging(log_widget):
-    logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
-    
-    # File handler
-    file_handler = logging.FileHandler('application_log.txt')
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    logger.addHandler(file_handler)
-    
-    # Widget handler
-    widget_handler = QTextEditLogger(log_widget)
-    widget_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    logger.addHandler(widget_handler)
+def get_last_messages(log_file, n=10):
+    try:
+        with open(log_file, mode='r', newline='', encoding='utf-8') as file:
+            reader = csv.reader(file)
+            next(reader)  # Skip header
+            messages = list(reader)
+            return [(row[2], row[3]) for row in messages[-n:]]
+    except Exception as e:
+        logging.error(f"Error reading last messages from CSV: {str(e)}")
+        return []
 
 def is_ignored_line(line, ignored_patterns):
     # Check if the line matches any of the ignored patterns
@@ -103,30 +90,56 @@ def is_ignored_line(line, ignored_patterns):
     
     return False
 
+class QTextEditLogger(QObject, logging.Handler):
+    log_message = pyqtSignal(str)
+
+    def __init__(self, widget):
+        super().__init__()
+        self.widget = widget
+        self.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.log_message.emit(msg)
+
+def setup_logging(log_widget):
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # File handler
+    file_handler = logging.FileHandler('application_log.txt')
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    logger.addHandler(file_handler)
+    
+    # Widget handler
+    widget_handler = QTextEditLogger(log_widget)
+    widget_handler.log_message.connect(log_widget.append)
+    logger.addHandler(widget_handler)
+
+    return logger
+
 def process_captured_text(text, my_username, other_usernames, ignored_patterns):
     logging.debug(f"Processing captured text: {text[:100]}...")  # Log first 100 characters
     lines = text.split('\n')
     processed_lines = []
-    all_usernames = [my_username] + other_usernames
-    
+    current_username = None
+
     for line in lines:
         line = line.strip()
-        if line and not is_ignored_line(line, ignored_patterns):
-            username = ''
-            message = line
-            
-            for name in all_usernames:
-                if line.startswith(name):
-                    username = name
-                    message = line[len(name):].strip()
-                    break
-            
-            # Replace '|' with 'I' at the beginning of the line
-            message = re.sub(r'^[|]', 'I', message)
-            # Replace isolated '|' with 'I'
-            message = re.sub(r'\s[|]\s', ' I ', message)
-            
-            processed_lines.append((username, message))
-    
+        if not line or is_ignored_line(line, ignored_patterns):
+            continue
+
+        for username in [my_username] + other_usernames:
+            if line.lower().startswith(username.lower()):
+                current_username = username
+                message = line[len(username):].strip()
+                if message.startswith(':'):
+                    message = message[1:].strip()
+                processed_lines.append((current_username, message))
+                break
+        else:
+            if current_username:
+                processed_lines.append((current_username, line))
+
     logging.debug(f"Processed {len(processed_lines)} lines")
     return processed_lines

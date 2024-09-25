@@ -39,8 +39,8 @@ class TransparentWindow(QWidget):
 
         # Add close button
         self.close_button = QPushButton("X", self)
-        self.close_button.setStyleSheet("background-color: red; color: white;")
-        self.close_button.setFixedSize(20, 20)
+        self.close_button.setStyleSheet("background-color: grey; color: white;")
+        self.close_button.setFixedSize(15, 15)
         self.close_button.clicked.connect(self.close)
         
         size_grip = QSizeGrip(self)
@@ -65,7 +65,7 @@ class TransparentWindow(QWidget):
         painter.drawRect(capture_area)
 
         # Position close button
-        self.close_button.move(self.width() - 25, 5)
+        self.close_button.move(self.width() - self.close_button.width(), 0)
 
     def mousePressEvent(self, event):
         self.oldPos = event.globalPos()
@@ -132,6 +132,7 @@ class TransparentWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self.close_button.move(self.width() - self.close_button.width(), 0)
 
     def closeEvent(self, event):
         logging.info("Closing TransparentWindow")

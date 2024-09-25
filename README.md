@@ -26,8 +26,9 @@ Before you can run the Automatic Chat Reader, you need to install the following:
 
 3. **Python Dependencies**
    - Install required Python packages by running:
-     ```pip install -r requirements.txt
-          ```
+     ```
+     pip install -r requirements.txt
+          
 
 ## Setup and Configuration
 

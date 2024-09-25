@@ -11,7 +11,7 @@ class TransparentWindow(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.min_size = QSize(400, 300)
+        self.min_size = QSize(50, 50)
         self.border_width = 2
         self.corner_size = 10
         self.capture_inset = 5  # Inset for the dotted line
@@ -29,7 +29,7 @@ class TransparentWindow(QWidget):
 
     def initUI(self):
         self.setWindowTitle('Chat Analyzer')
-        self.setGeometry(100, 100, 500, 400)
+        self.setGeometry(100, 100, 400, 250)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMinimumSize(self.min_size)

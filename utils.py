@@ -50,15 +50,26 @@ def create_new_log_file():
     
     return log_file
 
+import csv
+import logging
+
 def append_to_csv(log_file, conversation_type, username, message):
-    with open(log_file, mode='a', newline='', encoding='utf-8') as file:
-        writer = csv.writer(file)
-        
+    try:
         with open(log_file, mode='r', newline='', encoding='utf-8') as readfile:
             lines = list(csv.reader(readfile))
             last_id = int(lines[-1][0]) if len(lines) > 1 else 0
         
-        writer.writerow([f"{last_id + 1:04d}", conversation_type, username, message])
+        new_id = f"{last_id + 1:04d}"
+        
+        with open(log_file, mode='a', newline='', encoding='utf-8') as file:
+            writer = csv.writer(file)
+            writer.writerow([new_id, conversation_type, username, message])
+        
+        logging.info(f"Successfully appended new entry to {log_file}")
+    except IOError as e:
+        logging.error(f"IOError occurred while appending to {log_file}: {str(e)}")
+    except Exception as e:
+        logging.error(f"Unexpected error occurred while appending to {log_file}: {str(e)}")
 
 def get_last_messages(log_file, n=10):
     try:
@@ -123,23 +134,36 @@ def process_captured_text(text, my_username, other_usernames, ignored_patterns):
     lines = text.split('\n')
     processed_lines = []
     current_username = None
+    current_message = []
 
     for line in lines:
         line = line.strip()
         if not line or is_ignored_line(line, ignored_patterns):
             continue
 
+        username_match = False
         for username in [my_username] + other_usernames:
             if line.lower().startswith(username.lower()):
+                if current_username and current_message:
+                    processed_lines.append((current_username, ' '.join(current_message)))
                 current_username = username
                 message = line[len(username):].strip()
                 if message.startswith(':'):
                     message = message[1:].strip()
-                processed_lines.append((current_username, message))
+                current_message = [message]
+                username_match = True
                 break
-        else:
+        
+        if not username_match:
             if current_username:
-                processed_lines.append((current_username, line))
+                current_message.append(line)
+            else:
+                # If no username has been found yet, treat this as a new message with an unknown user
+                current_username = "Unknown"
+                current_message = [line]
+
+    if current_username and current_message:
+        processed_lines.append((current_username, ' '.join(current_message)))
 
     logging.debug(f"Processed {len(processed_lines)} lines")
     return processed_lines

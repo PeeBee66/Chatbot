@@ -36,9 +36,9 @@ class ChatPositionHandler(QObject):
             logging.warning("Attempted to click chat input, but position is not set.")
 
     def type_message(self, message):
-        if self.chat_input_position and message:
-            self.click_chat_input()
-            pyautogui.typewrite(str(message))  # Convert to string for safety
+        if self.chat_input_position:
+            pyautogui.click(self.chat_input_position.x, self.chat_input_position.y)
+            pyautogui.typewrite(message)
             pyautogui.press('enter')
         else:
-            logging.warning("Attempted to type message, but chat input position is not set or message is empty.")
+            logging.warning("Attempted to type message, but chat input position is not set.")

@@ -1,7 +1,8 @@
 import logging
 from PyQt5.QtCore import QObject, pyqtSignal, QThread
 from PyQt5.QtWidgets import QProgressDialog
-from ollama_handler import handle_ollama_response
+from PyQt5.QtCore import Qt
+from utils import append_to_csv
 
 class OllamaWorker(QThread):
     finished = pyqtSignal(str, str)
@@ -16,34 +17,37 @@ class OllamaWorker(QThread):
         self.conversation_history = conversation_history
 
     def run(self):
-        # Prepare the prompt with the conversation history
-        full_prompt = self.system_prompt + "\n\nConversation history:\n"
-        for user, msg in self.conversation_history:
-            full_prompt += f"{user}: {msg}\n"
-        full_prompt += f"\nPlease respond to the following message from {self.username}:"
+        try:
+            # Prepare the prompt with the conversation history
+            full_prompt = self.system_prompt + "\n\nConversation history:\n"
+            for user, msg in self.conversation_history:
+                full_prompt += f"{user}: {msg}\n"
+            full_prompt += f"\nPlease respond to the following message from {self.username}:"
 
-        response, error = handle_ollama_response(
-            None,  # We don't need the parent widget here
-            self.ollama_api,
-            full_prompt,
-            f"Message from {self.username}:",
-            self.message,
-            self.chat_input_position
-        )
-        self.finished.emit(response, error)
+            response = self.ollama_api.send_request(full_prompt, f"Message from {self.username}:", self.message)
+            self.finished.emit(response, "")
+        except Exception as e:
+            self.finished.emit("", str(e))
 
 class AIHandler(QObject):
     response_ready = pyqtSignal(str, str)
+    ai_response_complete = pyqtSignal()
 
-    def __init__(self, ollama_api, background_prompt):
+    def __init__(self, ollama_api, background_prompt, chat_position_handler):
         super().__init__()
         self.ollama_api = ollama_api
         self.background_prompt = background_prompt
+        self.chat_position_handler = chat_position_handler
+        self.log_file = None
 
-    def process_new_message(self, log_file, username, message, chat_input_position, conversation_history):
+    def set_log_file(self, log_file):
+        self.log_file = log_file
+
+    def process_new_message(self, username, message, chat_input_position, conversation_history):
         # Create and show progress dialog
         progress = QProgressDialog("Processing message...", "Cancel", 0, 0)
         progress.setWindowTitle("AI Response")
+        progress.setWindowFlags(progress.windowFlags() | Qt.WindowStaysOnTopHint)
         progress.setModal(True)
         progress.show()
 
@@ -58,7 +62,16 @@ class AIHandler(QObject):
             logging.error(f"Error in Ollama response: {error}")
         else:
             logging.info(f"Ollama's response: {response}")
+            # Type the response into the chat
+            self.chat_position_handler.type_message(response)
+            # Update the CSV with Ollama's response
+            if self.log_file:
+                append_to_csv(self.log_file, "ollama_auto_reply", "Ollama", response)
+                logging.info(f"Reply sent to $Other user from Ollama.")
+            else:
+                logging.warning("Log file not set, unable to append Ollama response to CSV")
         self.response_ready.emit(response, error)
+        self.ai_response_complete.emit()
 
     def set_background_prompt(self, prompt):
         self.background_prompt = prompt

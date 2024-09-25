@@ -38,10 +38,16 @@ def main():
     try:
         main_window = PipsChatAnalyserUI()
         main_window.show()
-        sys.exit(app.exec_())
+        app.exec_()
     except Exception as e:
         logging.critical(f"Critical error in main application: {str(e)}", exc_info=True)
         print(f"Critical error in main application: {str(e)}")
+    finally:
+        # Attempt to cleanly shut down logging
+        try:
+            logging.shutdown()
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     main()

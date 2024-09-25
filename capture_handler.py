@@ -2,11 +2,8 @@ import logging
 from PyQt5.QtCore import QObject, pyqtSignal
 from utils import append_to_csv, is_ignored_line
 
-class CaptureHandler(QObject):
-    capture_complete = pyqtSignal(list)
-
+class CaptureHandler:
     def __init__(self, analyzer_window, my_username, other_usernames, ignored_patterns):
-        super().__init__()
         self.analyzer_window = analyzer_window
         self.my_username = my_username
         self.other_usernames = other_usernames

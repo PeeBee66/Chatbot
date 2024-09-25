@@ -1,15 +1,19 @@
 {
-    "ollama_url": "http://ollama:11434/",
-    "model": "llama3.1:latest",
-    "capture_interval": 30,
+    "prompt": "I'm 30 years old, a winner and grimmer, and I love talking about sailing boats. I prefer using short messages filled with slang. When chatting with my mate Bob, I always aim to be supportive and respond directly to his questions. I've also known my friend Bob for years, and when I chat with him, I keep things vague, short, and avoid sounding like an AI. Conversations with Bob often touch on going to the footy this season",
     "my_username": "Harry",
     "other_usernames": [
         "Bob"
     ],
-    "prompt": "I'm 30 years old, a winner and grimmer, and I love talking about sailing boats. I prefer using short messages filled with slang. When chatting with my mate Bob, I always aim to be supportive and respond directly to his questions. I've also known my friend Bob for years, and when I chat with him, I keep things vague, short, and avoid sounding like an AI. Conversations with Bob often touch on going to the footy this season",
+    "ollama_url": "http://ollama:11434/",
+    "model": "llama3.1:latest",
+    "capture_interval": 30,
     "ignored_lines": [
         "Today v",
         "Friday, September 13th v",
         "(edited)"
-    ]
+    ],
+    "chat_input_position": {
+        "x": 599,
+        "y": 886
+    }
 }

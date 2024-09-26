@@ -23,19 +23,14 @@ class StartAnalyzer(QObject):
 
     def capture_restart(self):
         try:
-            # Stop any ongoing analysis
             self.stop_analysis()
-
-            # Create a new CSV file and set it as the current database
             self.log_file = create_new_log_file()
             logging.info(f"New CSV file created: {self.log_file}")
             self.capture_handler.set_log_file(self.log_file)
 
-            # Perform the capture
             captured_text = self.analyzer_window.capture_screen()
             processed_lines = self.capture_handler.process_captured_text(captured_text)
 
-            # Add captured text to CSV
             for username, message in processed_lines:
                 append_to_csv(self.log_file, "captured_conversation", username, message)
 
@@ -67,22 +62,12 @@ class StartAnalyzer(QObject):
         logging.info(f"Screen Captured, {self.capture_interval} sec before next screen refresh")
         captured_text = self.analyzer_window.capture_screen()
         processed_lines = self.capture_handler.process_captured_text(captured_text)
-        new_text = self.get_new_text(processed_lines)
+        new_text = self.capture_handler.get_new_text(processed_lines)
         
         if new_text:
             self.handle_new_text(new_text)
         else:
             logging.info(f"No new text found waiting {self.capture_interval} sec to retry")
-
-    def get_new_text(self, processed_lines):
-        last_messages = get_last_messages(self.log_file, len(processed_lines))
-        new_text = []
-        
-        for processed_line in processed_lines:
-            if processed_line not in last_messages:
-                new_text.append(processed_line)
-        
-        return new_text
 
     def handle_new_text(self, new_text):
         logging.info(f"New Text is found updating database. ##TEXT that was added## {new_text}")
@@ -109,11 +94,8 @@ class StartAnalyzer(QObject):
         logging.info("Contacting Ollama, not checking for new text until reply is entered.")
         self.capture_timer.stop()
         
-        # Combine all messages into a single string
         combined_message = "\n".join([f"{username}: {message}" for username, message in messages])
-        
-        # Get the entire conversation history from the CSV
-        conversation_history = get_last_messages(self.log_file, -1)  # -1 to get all messages
+        conversation_history = get_last_messages(self.log_file, -1)
         
         self.ai_handler.process_new_message(messages[-1][0], combined_message, 
                                             self.chat_position_handler.get_chat_position(), 

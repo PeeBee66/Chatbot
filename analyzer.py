@@ -14,8 +14,11 @@ class TransparentWindow(QWidget):
         self.min_size = QSize(50, 50)
         self.border_width = 2
         self.corner_size = 10
-        self.capture_inset = 5  # Inset for the dotted line
-        self.capture_reduction = 1  # Reduction of actual capture area (1 pixel ≈ 0.25mm)
+        self.capture_inset = 5
+        self.capture_reduction = 1
+        self.buffer_zone = 20  # New: Buffer zone size in pixels
+        self.recent_lines = []  # New: List to store recent lines
+        self.max_recent_lines = 20  # New: Maximum number of recent lines to store
         self.initUI()
         self.oldPos = None
         
@@ -37,7 +40,6 @@ class TransparentWindow(QWidget):
         layout = QVBoxLayout()
         self.setLayout(layout)
 
-        # Add close button
         self.close_button = QPushButton("X", self)
         self.close_button.setStyleSheet("background-color: grey; color: white;")
         self.close_button.setFixedSize(15, 15)
@@ -50,21 +52,17 @@ class TransparentWindow(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         
-        # Draw semi-transparent background
         painter.setBrush(QColor(0, 0, 0, 50))
         painter.setPen(Qt.NoPen)
         painter.drawRect(self.rect())
         
-        # Draw border
         painter.setPen(QPen(QColor(255, 255, 255), self.border_width, Qt.SolidLine))
         painter.drawRect(self.rect().adjusted(self.border_width//2, self.border_width//2, -self.border_width//2, -self.border_width//2))
         
-        # Draw capture area with light grey, thin line
         capture_area = self.get_visible_capture_area()
         painter.setPen(QPen(QColor(200, 200, 200), 1, Qt.DashLine))
         painter.drawRect(capture_area)
 
-        # Position close button
         self.close_button.move(self.width() - self.close_button.width(), 0)
 
     def mousePressEvent(self, event):
@@ -91,7 +89,7 @@ class TransparentWindow(QWidget):
         visible_area = self.get_visible_capture_area()
         return visible_area.adjusted(
             self.capture_reduction,
-            self.capture_reduction,
+            self.capture_reduction + self.buffer_zone,  # Added buffer zone
             -self.capture_reduction,
             -self.capture_reduction
         )
@@ -117,18 +115,34 @@ class TransparentWindow(QWidget):
             custom_config = r'--oem 3 --psm 6'
             text = pytesseract.image_to_string(screenshot, config=custom_config)
             
-            logging.debug(f"OCR completed. Captured text length: {len(text)}")
-            if not text:
-                logging.warning("No text captured by Tesseract")
-            else:
-                logging.debug(f"Captured text: {text}")
-                self.text_captured.emit(text)
+            unique_text = self.process_new_text(text)
             
-            return text
+            logging.debug(f"OCR completed. Captured text length: {len(unique_text)}")
+            if not unique_text:
+                logging.warning("No new text captured")
+            else:
+                logging.debug(f"Captured text: {unique_text}")
+                self.text_captured.emit(unique_text)
+            
+            return unique_text
         except Exception as e:
             logging.error(f"Unexpected error in capture_screen: {str(e)}")
             logging.error(traceback.format_exc())
             return ""
+
+    def process_new_text(self, text):
+        new_lines = text.split('\n')
+        unique_new_lines = []
+        
+        for line in new_lines:
+            line = line.strip()
+            if line and line not in self.recent_lines:
+                unique_new_lines.append(line)
+        
+        # Update recent lines
+        self.recent_lines = (self.recent_lines + unique_new_lines)[-self.max_recent_lines:]
+        
+        return '\n'.join(unique_new_lines)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
